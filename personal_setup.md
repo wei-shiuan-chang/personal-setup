@@ -64,9 +64,7 @@ For Bash on Linux, WSL, or Git Bash, add the following at the end of `~/.bashrc`
 # ── Personal settings ────────────────────────────────────────────────────────
 
 OPENBMC_ROOT="${OPENBMC_ROOT:-$HOME/Projects/openbmc_aspeed_sdk_11.03/openbmc-11.03}"
-BMC_QEMU_SCRIPT="${BMC_QEMU_SCRIPT:-$HOME/Desktop/scripts/start_qemu.sh}"
-BMCWEB_TEST_VENV="${BMCWEB_TEST_VENV:-$HOME/.venvs/bmcweb-host-tests}"
-BMCWEB_MESON_VERSION="${BMCWEB_MESON_VERSION:->=1.3,<2}"
+BMC_SCRIPTS_DIR="$HOME/Desktop/scripts"
 
 # ── Interactive prompt ───────────────────────────────────────────────────────
 
@@ -125,120 +123,19 @@ patch_check() {
     git apply --check --verbose -- "$1"
 }
 
-# ── bmcweb host-test environment ─────────────────────────────────────────────
-
-bmcweb_test_env() {
-    local version="${1:-$BMCWEB_MESON_VERSION}"
-    local venv="$BMCWEB_TEST_VENV"
-
-    if [[ ! -x "$venv/bin/python" ]]; then
-        python3 -m venv "$venv" || return 1
-    fi
-
-    "$venv/bin/python" -m pip install "meson${version}" requests || return 1
-    "$venv/bin/meson" --version
-}
-
-# Usage: bmcweb_test [MACHINE [TEST_EXECUTABLE [GTEST_FILTER]]]
-# Omitted arguments are prompted for. An empty filter runs the whole executable.
-bmcweb_test() (
-    local machine="${1:-}"
-    local target="${2:-}"
-    local filter="${3:-}"
-    local venv="$BMCWEB_TEST_VENV"
-
-    if (( $# > 3 )); then
-        echo 'Usage: bmcweb_test [MACHINE [TEST_EXECUTABLE [GTEST_FILTER]]]' >&2
-        return 2
-    fi
-    if [[ -z "$machine" ]]; then
-        read -r -p 'OpenBMC machine: ' machine || return 1
-    fi
-    if [[ -z "$target" ]]; then
-        read -r -p 'Test executable (e.g. registries_test): ' target || return 1
-    fi
-    if [[ -z "$machine" || -z "$target" ]]; then
-        echo 'Machine and test executable are required.' >&2
-        return 2
-    fi
-    if (( $# < 3 )); then
-        read -r -p 'Google Test filter (Enter for all tests): ' filter || return 1
-    fi
-
-    local src="$OPENBMC_ROOT/build/$machine/workspace/sources/bmcweb"
-    local build="$src/build-host-tests"
-
-    if [[ ! -f "$src/meson.build" ]]; then
-        printf 'Cannot find the bmcweb checkout at %s\n' "$src" >&2
-        return 1
-    fi
-
-    if [[ ! -x "$venv/bin/meson" ]] ||
-       ! "$venv/bin/python" -c 'import requests' 2>/dev/null; then
-        bmcweb_test_env || return 1
-    fi
-
-    # Read the selected machine's registry inputs before changing host tools.
-    local registry_files
-    registry_files=$(
-        set -o pipefail
-        cd "$OPENBMC_ROOT" || exit 1
-        source ./setup "$machine" >&2 || exit 1
-        bitbake -e bmcweb |
-            sed -n '/^EXTRA_OEMESON="/s/.*-Dpdi-registry-files=\([^"[:space:]]*\).*/\1/p'
-    ) || return 1
-
-    if [[ -z "$registry_files" ]]; then
-        printf 'No pdi-registry-files setting found for %s.\n' "$machine" >&2
-        return 1
-    fi
-
-    export PATH="$venv/bin:$PATH"
-
-    # Optional host compiler override. Meson checks the project's requirements.
-    if [[ -n "${BMCWEB_GCC_ROOT:-}" ]]; then
-        local gcc_root="$BMCWEB_GCC_ROOT"
-        local gcc_version
-
-        if [[ ! -x "$gcc_root/bin/gcc" || ! -x "$gcc_root/bin/g++" ]]; then
-            printf 'Cannot find gcc and g++ under %s/bin\n' "$gcc_root" >&2
-            return 1
-        fi
-
-        export CC="$gcc_root/bin/gcc"
-        export CXX="$gcc_root/bin/g++"
-        export PATH="$gcc_root/bin:$PATH"
-        if [[ -d "$gcc_root/lib64" ]]; then
-            export LD_LIBRARY_PATH="$gcc_root/lib64${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
-        fi
-
-        gcc_version=$("$CXX" -dumpfullversion -dumpversion) || return 1
-        build="$src/build-host-tests-gcc-$gcc_version"
-    fi
-
-    local -a setup_args=()
-    if [[ -f "$build/meson-private/coredata.dat" ]]; then
-        setup_args+=(--reconfigure)
-    fi
-
-    "$venv/bin/meson" setup "${setup_args[@]}" "$build" "$src" \
-        -Dtests=enabled \
-        -Dredfish-dbus-log=enabled \
-        "-Dpdi-registry-files=$registry_files" || return 1
-
-    ninja -C "$build" "test/$target" || return 1
-    "$build/test/$target" --gtest_filter="${filter:-*}"
-)
+# Load the bmcweb host-test helpers from the personal scripts directory.
+source "${BMCWEB_TEST_SCRIPT:-$BMC_SCRIPTS_DIR/bmcweb-tests.sh}"
 
 # ── OpenBMC QEMU ─────────────────────────────────────────────────────────────
 
 bmc_qemu() {
-    if [[ ! -r "$BMC_QEMU_SCRIPT" ]]; then
-        printf 'Cannot read QEMU launcher: %s\n' "$BMC_QEMU_SCRIPT" >&2
+    local launcher="${BMC_QEMU_SCRIPT:-$BMC_SCRIPTS_DIR/start_qemu.sh}"
+    if [[ ! -r "$launcher" ]]; then
+        printf 'Cannot read QEMU launcher: %s\n' "$launcher" >&2
         return 1
     fi
 
-    OPENBMC_ROOT="$OPENBMC_ROOT" bash "$BMC_QEMU_SCRIPT" "$@"
+    OPENBMC_ROOT="$OPENBMC_ROOT" bash "$launcher" "$@"
 }
 
 # ── Help ─────────────────────────────────────────────────────────────────────
@@ -265,6 +162,19 @@ HELP
 Reload with `source ~/.bashrc`. On Windows, use this in WSL or Git Bash; PowerShell uses a different configuration.
 
 Both prompts show `user@host path (branch)` inside a Git repository and omit the branch outside one. The Bash version also omits it when HEAD is detached.
+
+### Run bmcweb host tests
+
+Place `bmcweb-tests.sh` and `start_qemu.sh` in the directory set by `BMC_SCRIPTS_DIR` on the Linux build host. To move both scripts, edit that one setting in `~/.bashrc`. To override only the test script, set
+`BMCWEB_TEST_SCRIPT` to its path before loading the Bash block. The script
+defines both test commands. The first test run prepares Meson and requests.
+For a recognized GCC minimum, it checks installed compilers and then uses npm
+and npx to install a matching xPack GCC in the user store if necessary.
+Set `BMCWEB_GCC_ROOT` to select an existing toolchain explicitly.
+
+```bash
+bmcweb_test cm14ep3r registries_test 'DbusEventMapping.*'
+```
 
 ### Run OpenBMC in QEMU
 
