@@ -124,7 +124,7 @@ patch_check() {
 }
 
 # Load the bmcweb host-test helpers from the personal scripts directory.
-source "${BMCWEB_TEST_SCRIPT:-$BMC_SCRIPTS_DIR/bmcweb-tests.sh}"
+source "${BMCWEB_TEST_SCRIPT:-$BMC_SCRIPTS_DIR/bmcweb_tests.sh}"
 
 # ── OpenBMC QEMU ─────────────────────────────────────────────────────────────
 
@@ -165,7 +165,7 @@ Both prompts show `user@host path (branch)` inside a Git repository and omit the
 
 ### Run bmcweb host tests
 
-Place `bmcweb-tests.sh` and `start_qemu.sh` in the directory set by `BMC_SCRIPTS_DIR` on the Linux build host. To move both scripts, edit that one setting in `~/.bashrc`. To override only the test script, set
+Place `bmcweb_tests.sh` and `start_qemu.sh` in the directory set by `BMC_SCRIPTS_DIR` on the Linux build host. To move both scripts, edit that one setting in `~/.bashrc`. To override only the test script, set
 `BMCWEB_TEST_SCRIPT` to its path before loading the Bash block. The script
 defines both test commands. The first test run prepares Meson and requests.
 For a recognized GCC minimum, it checks installed compilers and then uses npm
