@@ -44,100 +44,12 @@ patch_check() {
     git apply --check --verbose -- "${1:?Usage: patch_check PATCH}"
 }
 
-OPENBMC_ROOT="${OPENBMC_ROOT:-$HOME/Projects/openbmc_aspeed_sdk_11.03/openbmc-11.03}"
-BMC_QEMU_SCRIPT="${BMC_QEMU_SCRIPT:-$HOME/Desktop/scripts/start_qemu.sh}"
-BMCWEB_MESON_VERSION='>=1.3,<2'
-
-bmcweb_test_env() {
-    local version="${1:-$BMCWEB_MESON_VERSION}"
-    local venv="$HOME/.venvs/bmcweb-host-tests"
-
-    if [[ ! -x "$venv/bin/python" ]]; then
-        python3 -m venv "$venv" || return 1
-    fi
-
-    "$venv/bin/python" -m pip install "meson${version}" || return 1
-    "$venv/bin/meson" --version
-}
-
-bmcweb_test() (
-    local machine="${1:-}"
-    local target="${2:-}"
-    local filter="${3:-}"
-    local root="${OPENBMC_ROOT:-$HOME/Projects/openbmc_aspeed_sdk_11.03/openbmc-11.03}"
-    local venv="$HOME/.venvs/bmcweb-host-tests"
-
-    if [[ -z "$machine" ]]; then
-        printf 'OpenBMC machine: ' >&2
-        read -r machine || return 1
-    fi
-    if [[ -z "$target" ]]; then
-        printf 'Test executable (e.g. registries_test): ' >&2
-        read -r target || return 1
-    fi
-    if (( $# < 3 )); then
-        printf 'Google Test filter (Enter for all tests): ' >&2
-        read -r filter || return 1
-    fi
-    if [[ -z "$machine" || -z "$target" ]]; then
-        echo 'Machine and test executable are required.' >&2
-        return 1
-    fi
-
-    local src="$root/build/$machine/workspace/sources/bmcweb"
-    local build="$src/build-host-tests"
-    if [[ ! -f "$src/meson.build" ]]; then
-        printf 'Cannot find the bmcweb checkout at %s\n' "$src" >&2
-        return 1
-    fi
-    if [[ ! -x "$venv/bin/meson" ]]; then
-        printf 'Cannot find Meson at %s/bin/meson\n' "$venv" >&2
-        return 1
-    fi
-
-    # Load OpenBMC's setup script in Bash, including when called from zsh.
-    local registry_files
-    registry_files=$(
-        set -o pipefail
-        cd "$root" || exit 1
-        bash -c 'source ./setup "$1" >&2 && bitbake -e bmcweb' bash "$machine" |
-            sed -n '/^EXTRA_OEMESON="/s/.*-Dpdi-registry-files=\([^"[:space:]]*\).*/\1/p'
-    ) || return 1
-
-    if [[ -z "$registry_files" ]]; then
-        printf 'No pdi-registry-files setting found for %s.\n' "$machine" >&2
-        return 1
-    fi
-
-    export PATH="$venv/bin:$PATH"
-    local setup_args=()
-    if [[ -f "$build/meson-private/coredata.dat" ]]; then
-        setup_args+=(--reconfigure)
-    fi
-
-    "$venv/bin/meson" setup "${setup_args[@]}" "$build" "$src" \
-        -Dtests=enabled \
-        -Dredfish-dbus-log=enabled \
-        "-Dpdi-registry-files=$registry_files" || return 1
-
-    ninja -C "$build" "test/$target" || return 1
-    "$build/test/$target" --gtest_filter="${filter:-*}"
-)
-
-bmc_qemu() {
-    OPENBMC_ROOT="$OPENBMC_ROOT" bash "$BMC_QEMU_SCRIPT" "$@"
-}
-
 tools_help() {
     printf '%s\n' \
         'check_python FILE   Check Python syntax without executing it.' \
         'check_json FILE     Check JSON syntax.' \
         'git_where           Show directory, repository, branch and changes.' \
         'patch_check PATCH   Check patch applicability without applying it.' \
-        'bmcweb_test_env [VERSION_SPEC]         Install Meson in the host-test venv (default >=1.3,<2).' \
-        'bmcweb_test [MACHINE [TARGET [FILTER]]] Build and run a host test. Prompts for omitted arguments.' \
-        '                                       Use an empty filter for all tests. Set OPENBMC_ROOT to override the SDK path.' \
-        'bmc_qemu [MACHINE] [--image PATH]       Start QEMU. Omit MACHINE for a prompt, or pass extra launcher options.' \
         'tools_help          List personal shell commands.'
 }
 ```
@@ -149,105 +61,130 @@ Reload with `source ~/.zshrc`.
 For Bash on Linux, WSL, or Git Bash, add the following at the end of `~/.bashrc`, after any existing `PS1` assignment:
 
 ```bash
-# Optional: enabled by default in modern Bash; explicitly keep bracketed paste on.
-# Treat pasted text as one block so pasted newlines do not execute immediately.
-# Bash only: Zsh handles bracketed paste itself and does not need this command.
-bind 'set enable-bracketed-paste on'
+# ── Personal settings ────────────────────────────────────────────────────────
 
-# Helper for PS1; the Git command could also be placed directly in PS1.
+OPENBMC_ROOT="${OPENBMC_ROOT:-$HOME/Projects/openbmc_aspeed_sdk_11.03/openbmc-11.03}"
+BMC_QEMU_SCRIPT="${BMC_QEMU_SCRIPT:-$HOME/Desktop/scripts/start_qemu.sh}"
+BMCWEB_TEST_VENV="${BMCWEB_TEST_VENV:-$HOME/.venvs/bmcweb-host-tests}"
+BMCWEB_MESON_VERSION="${BMCWEB_MESON_VERSION:->=1.3,<2}"
+
+# ── Interactive prompt ───────────────────────────────────────────────────────
+
 parse_git_branch() {
     local branch
-    # Get the current branch; print nothing outside Git or with detached HEAD.
-    branch=$(git symbolic-ref --quiet --short HEAD 2>/dev/null) || return
+    branch=$(git symbolic-ref --quiet --short HEAD 2>/dev/null) || return 0
     printf '(%s) ' "$branch"
 }
 
-# Normally enabled by default; ensures PS1 evaluates the function each time.
-shopt -s promptvars
-# Green user@host, blue directory, cyan branch, then the prompt symbol.
-# Single quotes defer $(parse_git_branch) until each prompt is displayed.
-PS1='\[\e[32m\]\u@\h\[\e[0m\] \[\e[34m\]\w\[\e[0m\] \[\e[36m\]$(parse_git_branch)\[\e[0m\]\$ '
+if [[ $- == *i* ]]; then
+    bind 'set enable-bracketed-paste on'
+    shopt -s promptvars
+    PS1='\[\e[32m\]\u@\h\[\e[0m\] \[\e[34m\]\w\[\e[0m\] \[\e[36m\]$(parse_git_branch)\[\e[0m\]\$ '
+fi
+
+# ── File and Git helpers ─────────────────────────────────────────────────────
 
 check_python() {
     if [[ $# -ne 1 ]]; then
         echo 'Usage: check_python FILE' >&2
         return 2
     fi
-    python3 -c 'import sys; from pathlib import Path; p = Path(sys.argv[1]); compile(p.read_bytes(), str(p), "exec"); print("Syntax OK")' "$1"
+
+    python3 - "$1" <<'PY'
+from pathlib import Path
+import sys
+
+path = Path(sys.argv[1])
+compile(path.read_bytes(), str(path), "exec")
+print("Syntax OK")
+PY
 }
 
 check_json() {
-    python3 -m json.tool "${1:?Usage: check_json FILE}" > /dev/null &&
+    if [[ $# -ne 1 ]]; then
+        echo 'Usage: check_json FILE' >&2
+        return 2
+    fi
+
+    python3 -m json.tool "$1" >/dev/null &&
         printf '%s\n' 'JSON syntax OK'
 }
 
 git_where() {
     printf 'Current directory: %s\n' "$PWD"
-    git rev-parse --show-toplevel || return
+    git rev-parse --show-toplevel || return 1
     git status --short --branch
 }
 
 patch_check() {
-    git apply --check --verbose -- "${1:?Usage: patch_check PATCH}"
+    if [[ $# -ne 1 ]]; then
+        echo 'Usage: patch_check PATCH' >&2
+        return 2
+    fi
+
+    git apply --check --verbose -- "$1"
 }
 
-OPENBMC_ROOT="${OPENBMC_ROOT:-$HOME/Projects/openbmc_aspeed_sdk_11.03/openbmc-11.03}"
-BMC_QEMU_SCRIPT="${BMC_QEMU_SCRIPT:-$HOME/Desktop/scripts/start_qemu.sh}"
-BMCWEB_MESON_VERSION='>=1.3,<2'
+# ── bmcweb host-test environment ─────────────────────────────────────────────
 
 bmcweb_test_env() {
     local version="${1:-$BMCWEB_MESON_VERSION}"
-    local venv="$HOME/.venvs/bmcweb-host-tests"
+    local venv="$BMCWEB_TEST_VENV"
 
     if [[ ! -x "$venv/bin/python" ]]; then
         python3 -m venv "$venv" || return 1
     fi
 
-    "$venv/bin/python" -m pip install "meson${version}" || return 1
+    "$venv/bin/python" -m pip install "meson${version}" requests || return 1
     "$venv/bin/meson" --version
 }
 
+# Usage: bmcweb_test [MACHINE [TEST_EXECUTABLE [GTEST_FILTER]]]
+# Omitted arguments are prompted for. An empty filter runs the whole executable.
 bmcweb_test() (
     local machine="${1:-}"
     local target="${2:-}"
     local filter="${3:-}"
-    local root="${OPENBMC_ROOT:-$HOME/Projects/openbmc_aspeed_sdk_11.03/openbmc-11.03}"
-    local venv="$HOME/.venvs/bmcweb-host-tests"
+    local venv="$BMCWEB_TEST_VENV"
 
+    if (( $# > 3 )); then
+        echo 'Usage: bmcweb_test [MACHINE [TEST_EXECUTABLE [GTEST_FILTER]]]' >&2
+        return 2
+    fi
     if [[ -z "$machine" ]]; then
-        printf 'OpenBMC machine: ' >&2
-        read -r machine || return 1
+        read -r -p 'OpenBMC machine: ' machine || return 1
     fi
     if [[ -z "$target" ]]; then
-        printf 'Test executable (e.g. registries_test): ' >&2
-        read -r target || return 1
-    fi
-    if (( $# < 3 )); then
-        printf 'Google Test filter (Enter for all tests): ' >&2
-        read -r filter || return 1
+        read -r -p 'Test executable (e.g. registries_test): ' target || return 1
     fi
     if [[ -z "$machine" || -z "$target" ]]; then
         echo 'Machine and test executable are required.' >&2
-        return 1
+        return 2
+    fi
+    if (( $# < 3 )); then
+        read -r -p 'Google Test filter (Enter for all tests): ' filter || return 1
     fi
 
-    local src="$root/build/$machine/workspace/sources/bmcweb"
+    local src="$OPENBMC_ROOT/build/$machine/workspace/sources/bmcweb"
     local build="$src/build-host-tests"
+
     if [[ ! -f "$src/meson.build" ]]; then
         printf 'Cannot find the bmcweb checkout at %s\n' "$src" >&2
         return 1
     fi
-    if [[ ! -x "$venv/bin/meson" ]]; then
-        printf 'Cannot find Meson at %s/bin/meson\n' "$venv" >&2
-        return 1
+
+    if [[ ! -x "$venv/bin/meson" ]] ||
+       ! "$venv/bin/python" -c 'import requests' 2>/dev/null; then
+        bmcweb_test_env || return 1
     fi
 
-    # Load OpenBMC's setup script in Bash, including when called from zsh.
+    # Read the selected machine's registry inputs before changing host tools.
     local registry_files
     registry_files=$(
         set -o pipefail
-        cd "$root" || exit 1
-        bash -c 'source ./setup "$1" >&2 && bitbake -e bmcweb' bash "$machine" |
+        cd "$OPENBMC_ROOT" || exit 1
+        source ./setup "$machine" >&2 || exit 1
+        bitbake -e bmcweb |
             sed -n '/^EXTRA_OEMESON="/s/.*-Dpdi-registry-files=\([^"[:space:]]*\).*/\1/p'
     ) || return 1
 
@@ -257,7 +194,29 @@ bmcweb_test() (
     fi
 
     export PATH="$venv/bin:$PATH"
-    local setup_args=()
+
+    # Optional host compiler override. Meson checks the project's requirements.
+    if [[ -n "${BMCWEB_GCC_ROOT:-}" ]]; then
+        local gcc_root="$BMCWEB_GCC_ROOT"
+        local gcc_version
+
+        if [[ ! -x "$gcc_root/bin/gcc" || ! -x "$gcc_root/bin/g++" ]]; then
+            printf 'Cannot find gcc and g++ under %s/bin\n' "$gcc_root" >&2
+            return 1
+        fi
+
+        export CC="$gcc_root/bin/gcc"
+        export CXX="$gcc_root/bin/g++"
+        export PATH="$gcc_root/bin:$PATH"
+        if [[ -d "$gcc_root/lib64" ]]; then
+            export LD_LIBRARY_PATH="$gcc_root/lib64${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+        fi
+
+        gcc_version=$("$CXX" -dumpfullversion -dumpversion) || return 1
+        build="$src/build-host-tests-gcc-$gcc_version"
+    fi
+
+    local -a setup_args=()
     if [[ -f "$build/meson-private/coredata.dat" ]]; then
         setup_args+=(--reconfigure)
     fi
@@ -271,21 +230,35 @@ bmcweb_test() (
     "$build/test/$target" --gtest_filter="${filter:-*}"
 )
 
+# ── OpenBMC QEMU ─────────────────────────────────────────────────────────────
+
 bmc_qemu() {
+    if [[ ! -r "$BMC_QEMU_SCRIPT" ]]; then
+        printf 'Cannot read QEMU launcher: %s\n' "$BMC_QEMU_SCRIPT" >&2
+        return 1
+    fi
+
     OPENBMC_ROOT="$OPENBMC_ROOT" bash "$BMC_QEMU_SCRIPT" "$@"
 }
 
+# ── Help ─────────────────────────────────────────────────────────────────────
+
 tools_help() {
-    printf '%s\n' \
-        'check_python FILE   Check Python syntax without executing it.' \
-        'check_json FILE     Check JSON syntax.' \
-        'git_where           Show directory, repository, branch and changes.' \
-        'patch_check PATCH   Check patch applicability without applying it.' \
-        'bmcweb_test_env [VERSION_SPEC]         Install Meson in the host-test venv (default >=1.3,<2).' \
-        'bmcweb_test [MACHINE [TARGET [FILTER]]] Build and run a host test. Prompts for omitted arguments.' \
-        '                                       Use an empty filter for all tests. Set OPENBMC_ROOT to override the SDK path.' \
-        'bmc_qemu [MACHINE] [--image PATH]       Start QEMU. Omit MACHINE for a prompt, or pass extra launcher options.' \
-        'tools_help          List personal shell commands.'
+    cat <<'HELP'
+check_python FILE                       Check Python syntax.
+check_json FILE                         Check JSON syntax.
+git_where                               Show repository, branch, and changes.
+patch_check PATCH                       Check whether a Git patch applies.
+
+bmcweb_test_env [VERSION_SPEC]          Set up Meson and requests.
+bmcweb_test [MACHINE [TARGET [FILTER]]] Build and run a bmcweb host test.
+                                        Omitted arguments are prompted for.
+BMCWEB_GCC_ROOT=/path bmcweb_test ...   Use a specific host GCC toolchain.
+
+bmc_qemu                                Prompt for an OpenBMC machine.
+bmc_qemu MACHINE [OPTIONS]              Start QEMU for that machine.
+bmc_qemu --help                         Show all launcher options.
+HELP
 }
 ```
 
