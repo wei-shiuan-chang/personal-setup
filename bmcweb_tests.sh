@@ -405,6 +405,7 @@ bmcweb_test() (
         esac
         shift
     done
+    local root="${OPENBMC_ROOT:-$HOME/Projects/openbmc_aspeed_sdk_11.03/openbmc-11.03}"
     local machine="${1:-}"
     local target="${2:-}"
     local filter="${3:-}"
@@ -415,7 +416,31 @@ bmcweb_test() (
         return 2
     fi
     if [[ -z "$machine" ]]; then
-        read -r -p 'OpenBMC machine: ' machine || return 1
+        local dir answer i
+        local -a machines=()
+        for dir in "$root"/build/*; do
+            [[ -f "$dir/workspace/sources/bmcweb/meson.build" ]] || continue
+            machines+=("${dir##*/}")
+        done
+        if (( ${#machines[@]} == 0 )); then
+            printf 'No bmcweb checkouts under %s/build/*/workspace/sources. Check OPENBMC_ROOT.\n' "$root" >&2
+            return 1
+        fi
+        printf 'OpenBMC machines under %s/build:\n' "$root" >&2
+        for i in "${!machines[@]}"; do
+            printf '  %3d  %s\n' "$((i + 1))" "${machines[i]}" >&2
+        done
+        while [[ -z "$machine" ]]; do
+            read -r -p 'Select a machine by number or name (q = cancel): ' answer || return 1
+            if [[ "$answer" == [qQ] ]]; then return 0; fi
+            for i in "${!machines[@]}"; do
+                if [[ "$answer" == "$((i + 1))" || "$answer" == "${machines[i]}" ]]; then
+                    machine=${machines[i]}
+                    break
+                fi
+            done
+            if [[ -z "$machine" ]]; then echo 'Choose a listed machine.' >&2; fi
+        done
     fi
     if "$all"; then
         if (( $# > 1 || ${#debugger[@]} )) || "$vscode_build"; then
@@ -423,15 +448,10 @@ bmcweb_test() (
             return 2
         fi
     fi
-    if [[ -z "$machine" ]]; then
-        echo 'Machine is required.' >&2
-        return 2
-    fi
     if [[ -n "$target" ]] && ! "$all" && (( $# < 3 )); then
         read -r -p 'Google Test filter (Enter for all tests): ' filter || return 1
     fi
 
-    local root="${OPENBMC_ROOT:-$HOME/Projects/openbmc_aspeed_sdk_11.03/openbmc-11.03}"
     local src="$root/build/$machine/workspace/sources/bmcweb"
     local work="$root/build/$machine/bmcweb-host-tests"
     local build="$work/build"
