@@ -185,12 +185,21 @@ _bmcweb_prepare_libs() (
            [[ ! -r "$deps/usr/include/nghttp2/nghttp2.h" ]] ||
            [[ ! -r "$lib/libnghttp2.a" && ! -r "$lib/libnghttp2.so" ]]; then
             if [[ ! -r "$ngsrc/CMakeLists.txt" ]]; then
-                (cd "$src" && "$venv/bin/meson" subprojects download nghttp2) || return 1
+                # Older bmcweb wraps omit method=cmake. Meson then checks
+                # for meson.build after fetching and patching the CMake tree.
+                local download_log="$cache/nghttp2-download.log"
+                if ! (set -o pipefail
+                      cd "$src" && "$venv/bin/meson" subprojects download nghttp2 2>&1 |
+                          tee "$download_log"); then
+                    [[ -s "$ngsrc/CMakeLists.txt" ]] &&
+                        grep -Fq 'Subproject exists but has no meson.build file' "$download_log" ||
+                        return 1
+                fi
             fi
             "$CMAKE" -S "$ngsrc" -B "$cache/build" -G Ninja \
                 -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr \
                 "-DCMAKE_INSTALL_LIBDIR=lib/${lib##*/}" -DENABLE_LIB_ONLY=ON \
-                -DENABLE_STATIC_LIB=ON -DENABLE_SHARED_LIB=OFF || return 1
+                -DBUILD_STATIC_LIBS=ON -DBUILD_SHARED_LIBS=OFF -DBUILD_TESTING=OFF || return 1
             "$CMAKE" --build "$cache/build" || return 1
             DESTDIR="$deps" "$CMAKE" --install "$cache/build" || return 1
         fi
