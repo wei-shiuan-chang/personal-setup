@@ -231,6 +231,17 @@ The generator finds `bmcweb_tests.sh` beside itself. To use another copy,
 set `BMCWEB_TEST_SCRIPT` when running the generator. The normal multi-root
 setup also generates the debug configuration.
 
+The first F5 entry, **Run all bmcweb host tests**, builds and runs the tests
+registered by the bmcweb Meson project for this machine. In an existing
+workspace, select it once if VS Code remembers an earlier launch selection.
+Results and failures appear in the terminal. To run the same suite in Bash:
+
+```bash
+source ~/Desktop/scripts/bmcweb_tests.sh
+bmcweb_test --all cm14ep3r
+```
+
+For C++ breakpoints, use the individual executable configuration.
 Open the test in the **bmcweb** folder, click the gutter at an executable
 line, select **Debug bmcweb host test (registries_test)** in Run and Debug,
 and press **F5**. Enter a Google Test filter such as `DbusEventMapping.*`,

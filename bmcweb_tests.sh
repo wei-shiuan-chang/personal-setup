@@ -337,13 +337,15 @@ _bmcweb_configure() {
 }
 
 # Usage: bmcweb_test [--setup] [--gdb] [MACHINE [TEST_EXECUTABLE [GTEST_FILTER]]]
+#        bmcweb_test [--setup] --all [MACHINE]
 # Omitted arguments are prompted for. An empty filter runs the whole executable.
 bmcweb_test() (
-    local setup=false vscode_build=false
+    local setup=false vscode_build=false all=false
     local -a debugger=()
     while (( $# )); do
         case "$1" in
             --setup) setup=true ;;
+            --all) all=true ;;
             --gdb) debugger=(gdb --args) ;;
             --vscode-build) vscode_build=true ;;
             --fast) ;; # Legacy incremental invocation.
@@ -363,14 +365,19 @@ bmcweb_test() (
     if [[ -z "$machine" ]]; then
         read -r -p 'OpenBMC machine: ' machine || return 1
     fi
-    if [[ -z "$target" ]]; then
+    if "$all"; then
+        if (( $# > 1 || ${#debugger[@]} )) || "$vscode_build"; then
+            echo 'Usage: bmcweb_test [--setup] --all [MACHINE]' >&2
+            return 2
+        fi
+    elif [[ -z "$target" ]]; then
         read -r -p 'Test executable (e.g. registries_test): ' target || return 1
     fi
-    if [[ -z "$machine" || -z "$target" ]]; then
+    if [[ -z "$machine" ]] || { ! "$all" && [[ -z "$target" ]]; }; then
         echo 'Machine and test executable are required.' >&2
         return 2
     fi
-    if (( $# < 3 )); then
+    if ! "$all" && (( $# < 3 )); then
         read -r -p 'Google Test filter (Enter for all tests): ' filter || return 1
     fi
 
@@ -392,7 +399,7 @@ bmcweb_test() (
         echo 'Install GDB on the VS Code build host or add it to the task PATH.' >&2
         return 1
     fi
-    if "$vscode_build" && [[ ! -s "$state" ]]; then
+    if { "$vscode_build" || "$all"; } && [[ ! -s "$state" ]]; then
         setup=true
     fi
     local -a saved=() env_args=()
@@ -402,6 +409,10 @@ bmcweb_test() (
         fi
         if (( ${#saved[@]} < 2 )) || [[ ! -f "${saved[0]}/build.ninja" ||
               ! -f "$work/source/meson.build" ]]; then
+            if "$all"; then
+                printf 'Prepare this machine first: bmcweb_test --setup --all %q\n' "$machine" >&2
+                return 1
+            fi
             printf 'Prepare this machine first: bmcweb_test --setup %q %q %q\n' "$machine" "$target" "${filter:-*}" >&2
             return 1
         fi
@@ -423,6 +434,10 @@ bmcweb_test() (
             mv -- "$state.tmp" "$state" || return 1
     fi
 
+    if "$all"; then
+        env "${env_args[@]}" meson test -C "$build" --suite bmcweb --print-errorlogs
+        return
+    fi
     env "${env_args[@]}" ninja -C "$build" "test/$target" || return 1
     if "$vscode_build"; then
         local launch_dir="$work/vscode/$target"

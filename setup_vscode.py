@@ -947,10 +947,22 @@ def add_bmcweb_debug(
         "sourceFileMap": {str(work / "source"): str(checkout),
                           "../source": str(checkout)},
     }
+    suite_launch = {
+        "name": "Run all bmcweb host tests",
+        "type": "node-terminal",
+        "request": "launch",
+        "cwd": str(checkout),
+        "env": {"OPENBMC_ROOT": str(sdk)},
+        "command": shlex.join([
+            "bash", "-c", 'source "$1" && bmcweb_test --all "$2"',
+            "bmcweb-vscode", str(runner), machine_build.name,
+        ]),
+    }
     prompt = {"id": "bmcwebGtestFilter", "type": "promptString",
               "description": "Google Test filter", "default": "*"}
     for section, key, field, item in [
         ("tasks", "tasks", "label", task),
+        ("launch", "configurations", "name", suite_launch),
         ("launch", "configurations", "name", {**launch, "preLaunchTask": label}),
         ("launch", "configurations", "name",
          {**launch, "name": f"Debug last build ({target})"}),
@@ -968,7 +980,10 @@ def add_bmcweb_debug(
                 items[index] = item
                 break
         else:
-            items.append(item)
+            if item is suite_launch:
+                items.insert(0, item)
+            else:
+                items.append(item)
 
 
 def configure_multi_root(
@@ -1073,7 +1088,7 @@ def main() -> int:
     parser.add_argument("--bmcweb-debug", action="store_true",
                         help="configure workspace-level F5 debugging only")
     parser.add_argument("--test-target", default="registries_test",
-                        help="bmcweb test executable for the F5 configuration")
+                        help="individual executable for breakpoint debugging (the first F5 entry runs all bmcweb tests)")
     args = parser.parse_args()
     if not re.fullmatch(r"[A-Za-z0-9_][A-Za-z0-9_.-]*", args.test_target):
         parser.error("--test-target must be a test executable name")
