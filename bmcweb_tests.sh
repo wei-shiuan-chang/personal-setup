@@ -336,16 +336,67 @@ _bmcweb_configure() {
         -Dredfish-dbus-log=enabled || return 1
 }
 
+# Print the numbered choice to stdout so both the terminal and F5 use the same picker.
+_bmcweb_pick_target() {
+    local build_dir=$1 machine_name=$2 allow_all=$3 names answer i
+    local -a targets=()
+    names=$(python3 - "$build_dir" <<'PYTHON'
+import json
+import sys
+from pathlib import Path
+
+build = Path(sys.argv[1])
+with (build / "meson-info/intro-tests.json").open() as metadata:
+    tests = json.load(metadata)
+targets = set()
+for test in tests:
+    if not any(s.split(":", 1)[0] == "bmcweb" for s in test["suite"]):
+        continue
+    executable = build / test["cmd"][0]
+    if executable.parent == build / "test":
+        targets.add(executable.name)
+for target in sorted(targets):
+    print(target)
+PYTHON
+    ) || return 1
+    if [[ -n "$names" ]]; then
+        mapfile -t targets <<< "$names"
+    elif ! "$allow_all"; then
+        echo 'No individual bmcweb host tests found.' >&2
+        return 1
+    fi
+    printf 'Host tests for %s:\n' "$machine_name" >&2
+    if "$allow_all"; then
+        echo '    0  Run all bmcweb host tests (default)' >&2
+    fi
+    for i in "${!targets[@]}"; do
+        printf '  %3d  %s\n' "$((i + 1))" "${targets[i]}" >&2
+    done
+    while true; do
+        read -r -p 'Select a number (q = cancel): ' answer || return 130
+        if [[ "$answer" == [qQ] ]]; then return 130; fi
+        if "$allow_all" && [[ -z "$answer" || "$answer" == 0 ]]; then return 0; fi
+        for i in "${!targets[@]}"; do
+            if [[ "$answer" == "$((i + 1))" ]]; then
+                printf '%s\n' "${targets[i]}"
+                return 0
+            fi
+        done
+        echo 'Enter one of the listed numbers.' >&2
+    done
+}
+
 # Usage: bmcweb_test [--setup] [--gdb] [MACHINE [TEST_EXECUTABLE [GTEST_FILTER]]]
 #        bmcweb_test [--setup] --all [MACHINE]
-# Omitted arguments are prompted for. An empty filter runs the whole executable.
+# With no target, pick from the machine menu and run all cases in the selection.
 bmcweb_test() (
-    local setup=false vscode_build=false all=false list_targets=false
+    local setup=false vscode_build=false all=false list_targets=false pick_only=false
     local -a debugger=()
     while (( $# )); do
         case "$1" in
             --setup) setup=true ;;
             --all) all=true ;;
+            --vscode-pick) pick_only=true ;;
             --vscode-list) all=true; list_targets=true ;;
             --gdb) debugger=(gdb --args) ;;
             --vscode-build) vscode_build=true ;;
@@ -371,14 +422,12 @@ bmcweb_test() (
             echo 'Usage: bmcweb_test [--setup] --all [MACHINE]' >&2
             return 2
         fi
-    elif [[ -z "$target" ]]; then
-        read -r -p 'Test executable (e.g. registries_test): ' target || return 1
     fi
-    if [[ -z "$machine" ]] || { ! "$all" && [[ -z "$target" ]]; }; then
-        echo 'Machine and test executable are required.' >&2
+    if [[ -z "$machine" ]]; then
+        echo 'Machine is required.' >&2
         return 2
     fi
-    if ! "$all" && (( $# < 3 )); then
+    if [[ -n "$target" ]] && ! "$all" && (( $# < 3 )); then
         read -r -p 'Google Test filter (Enter for all tests): ' filter || return 1
     fi
 
@@ -400,7 +449,7 @@ bmcweb_test() (
         echo 'Install GDB on the VS Code build host or add it to the task PATH.' >&2
         return 1
     fi
-    if { "$vscode_build" || "$all"; } && [[ ! -s "$state" ]]; then
+    if { "$vscode_build" || [[ -z "$target" ]]; } && [[ ! -s "$state" ]]; then
         setup=true
     fi
     local -a saved=() env_args=()
@@ -410,7 +459,7 @@ bmcweb_test() (
         fi
         if (( ${#saved[@]} < 2 )) || [[ ! -f "${saved[0]}/build.ninja" ||
               ! -f "$work/source/meson.build" ]]; then
-            if "$all"; then
+            if [[ -z "$target" ]]; then
                 printf 'Prepare this machine first: bmcweb_test --setup --all %q\n' "$machine" >&2
                 return 1
             fi
@@ -435,11 +484,27 @@ bmcweb_test() (
             mv -- "$state.tmp" "$state" || return 1
     fi
 
-    if "$list_targets"; then
+    if "$list_targets" || { ! "$all" && [[ -z "$target" ]]; }; then
         env "${env_args[@]}" ninja -C "$build" build.ninja >&2 || return 1
+    fi
+    if "$list_targets"; then
         printf '%s\0' "$build"
         cat "$build/meson-info/intro-tests.json"
         return
+    fi
+    if ! "$all" && [[ -z "$target" ]]; then
+        local allow_all=true status
+        if (( ${#debugger[@]} )); then allow_all=false; fi
+        target=$(_bmcweb_pick_target "$build" "$machine" "$allow_all") || {
+            status=$?
+            if (( status == 130 )) && ! "$pick_only"; then return 0; fi
+            return "$status"
+        }
+        if "$pick_only"; then
+            printf '%s\n' "$target"
+            return
+        fi
+        if [[ -z "$target" ]]; then all=true; fi
     fi
     if "$all"; then
         env "${env_args[@]}" meson test -C "$build" --suite bmcweb --print-errorlogs

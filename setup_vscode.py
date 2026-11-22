@@ -926,41 +926,17 @@ def choose_bmcweb_target(sources: Path) -> str:
     env = {**os.environ, "OPENBMC_ROOT": str(machine_build.parent.parent)}
     try:
         result = subprocess.run(
-            ["bash", "-c", 'source "$1" && bmcweb_test --vscode-list "$2"',
+            ["bash", "-c", 'source "$1" && bmcweb_test --vscode-pick "$2"',
              "bmcweb-vscode", str(bmcweb_runner()), machine_build.name],
             env=env, stdout=subprocess.PIPE, text=True, check=True,
         )
-        build_path, metadata = result.stdout.split("\0", 1)
-        build = Path(build_path)
-        tests = json.loads(metadata)
-    except (OSError, subprocess.CalledProcessError, ValueError) as error:
-        raise SetupError(f"Could not list tests for {machine_build.name}: {error}") from error
-
-    # The host runner builds test/<executable>. Meson test names can be aliases.
-    targets = set()
-    for test in tests:
-        if not any(s.split(":", 1)[0] == "bmcweb" for s in test["suite"]):
-            continue
-        executable = build / test["cmd"][0]
-        if executable.parent == build / "test":
-            targets.add(executable.name)
-
-    choices = ["Run all bmcweb host tests", *sorted(targets)]
-    print(f"Host tests for {machine_build.name}:")
-    for number, choice in enumerate(choices):
-        print(f"  {number:3}  {choice}")
-    while True:
-        try:
-            answer = input("Select a number [0 = all, q = cancel]: ").strip()
-        except (KeyboardInterrupt, EOFError):
+    except subprocess.CalledProcessError as error:
+        if error.returncode == 130:
             raise SetupError("Selection cancelled.") from None
-        if answer.lower() == "q":
-            raise SetupError("Selection cancelled.")
-        if not answer or answer == "0":
-            return "registries_test"  # Standard workspace with the suite entry first.
-        if answer in map(str, range(1, len(choices))):
-            return choices[int(answer)]
-        print("Enter one of the listed numbers.")
+        raise SetupError(f"Could not select a test for {machine_build.name}: {error}") from error
+    except OSError as error:
+        raise SetupError(f"Could not select a test for {machine_build.name}: {error}") from error
+    return result.stdout.strip() or "registries_test"
 
 
 def add_bmcweb_debug(

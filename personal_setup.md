@@ -215,6 +215,19 @@ print event
 step
 ```
 
+### Pick and run a bmcweb host test in Bash
+
+```bash
+source ~/Desktop/scripts/bmcweb_tests.sh
+bmcweb_test cm14ep3r
+```
+
+Enter a test number to build and immediately run all cases in that executable.
+Enter **0** or press **Enter** for the whole suite, or enter **q** to cancel.
+With just `bmcweb_test`, enter the machine name first. For an individual
+case, pass the executable and Google Test filter explicitly. With
+`bmcweb_test --gdb cm14ep3r`, select an individual executable to load in GDB.
+
 ### Debug a bmcweb host test with VS Code F5
 
 On the Linux build host, install GDB and enable Microsoft's C/C++ extension
