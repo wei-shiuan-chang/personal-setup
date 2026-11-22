@@ -165,9 +165,8 @@ Both prompts show `user@host path (branch)` inside a Git repository and omit the
 
 ### Run bmcweb host tests
 
-Place `bmcweb_tests.sh` and `start_qemu.sh` in the directory set by `BMC_SCRIPTS_DIR` on the Linux build host. To move both scripts, edit that one setting in `~/.bashrc`. To override only the test script, set
-`BMCWEB_TEST_SCRIPT` to its path before loading the Bash block. The script
-defines both test commands. The first test run prepares Meson and requests.
+Place `bmcweb_tests.sh` and `start_qemu.sh` in the directory set by `BMC_SCRIPTS_DIR` on the Linux build host. To move the scripts, edit that one setting in `~/.bashrc`. To override only the test script, set
+`BMCWEB_TEST_SCRIPT` to its path before loading the Bash block. Each run uses BitBake’s patched sdbusplus source for the selected machine and stages the native build under `build/MACHINE/bmcweb-host-tests` using rsync. The first test run prepares Meson and requests.
 For a recognized GCC minimum, it checks installed compilers and then uses npm
 and npx to install a matching xPack GCC in the user store if necessary.
 Set `BMCWEB_GCC_ROOT` to select an existing toolchain explicitly.

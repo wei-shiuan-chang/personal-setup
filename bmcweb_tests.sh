@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # Source this file from Bash on the OpenBMC build host.
 
+# Host environment setup
+
 _bmcweb_select_gcc() {
     local src="$1"
     local required compiler version prefix name
@@ -206,62 +208,11 @@ _bmcweb_prepare_libs() (
     fi
 )
 
-# Usage: bmcweb_test [MACHINE [TEST_EXECUTABLE [GTEST_FILTER]]]
-# Omitted arguments are prompted for. An empty filter runs the whole executable.
-bmcweb_test() (
-    local machine="${1:-}"
-    local target="${2:-}"
-    local filter="${3:-}"
-    local venv="${BMCWEB_TEST_VENV:-$HOME/.venvs/bmcweb-host-tests}"
-
-    if (( $# > 3 )); then
-        echo 'Usage: bmcweb_test [MACHINE [TEST_EXECUTABLE [GTEST_FILTER]]]' >&2
-        return 2
-    fi
-    if [[ -z "$machine" ]]; then
-        read -r -p 'OpenBMC machine: ' machine || return 1
-    fi
-    if [[ -z "$target" ]]; then
-        read -r -p 'Test executable (e.g. registries_test): ' target || return 1
-    fi
-    if [[ -z "$machine" || -z "$target" ]]; then
-        echo 'Machine and test executable are required.' >&2
-        return 2
-    fi
-    if (( $# < 3 )); then
-        read -r -p 'Google Test filter (Enter for all tests): ' filter || return 1
-    fi
-
-    local root="${OPENBMC_ROOT:-$HOME/Projects/openbmc_aspeed_sdk_11.03/openbmc-11.03}"
-    local src="$root/build/$machine/workspace/sources/bmcweb"
-    local build="$src/build-host-tests"
-
-    if [[ ! -f "$src/meson.build" ]]; then
-        printf 'Cannot find the bmcweb checkout at %s\n' "$src" >&2
-        return 1
-    fi
-
+# Called inside the bmcweb_test subshell. Adds host flags to setup_args.
+_bmcweb_prepare_host() {
     if [[ ! -x "$venv/bin/meson" ]] ||
        ! "$venv/bin/python" -c 'import requests, inflection, mako, markupsafe, yaml; from jsonschema import Draft202012Validator' 2>/dev/null; then
         bmcweb_test_env || return 1
-    fi
-
-    # Read the selected machine's registry inputs before changing host tools.
-    local recipe_info registry_files native_root
-    recipe_info=$(
-        set -o pipefail
-        cd "$root" || exit 1
-        source ./setup "$machine" >&2 || exit 1
-        bitbake -e bmcweb |
-            sed -n '/^EXTRA_OEMESON="/p; /^RECIPE_SYSROOT_NATIVE="/p'
-    ) || return 1
-
-    registry_files=$(sed -n '/^EXTRA_OEMESON="/s/.*-Dpdi-registry-files=\([^"[:space:]]*\).*/\1/p' <<< "$recipe_info")
-    native_root=$(sed -n 's/^RECIPE_SYSROOT_NATIVE="\(.*\)"$/\1/p' <<< "$recipe_info")
-
-    if [[ -z "$registry_files" ]]; then
-        printf 'No pdi-registry-files setting found for %s.\n' "$machine" >&2
-        return 1
     fi
 
     export PATH="$venv/bin:$PATH"
@@ -270,11 +221,9 @@ bmcweb_test() (
     if [[ -n "${CXX:-}" ]]; then
         local version
         version=$("$CXX" -dumpfullversion -dumpversion) || return 1
-        build="$src/build-host-tests-${CXX##*/}-$version"
+        build+="-${CXX##*/}-$version"
     fi
 
-    local -a setup_args=()
-    # Reuse the personal development packages from the cips host build.
     local deps="${BMCWEB_HOST_DEPS:-$HOME/tools/bmcweb-host-deps}"
     local triplet lib inc json native_bin
     triplet=$(dpkg-architecture -qDEB_HOST_MULTIARCH) || return 1
@@ -320,14 +269,103 @@ bmcweb_test() (
     setup_args+=("-Dcpp_args=$cpp_args" "-Dcpp_link_args=-L$lib")
     printf 'Host dependencies: %s\n' "$deps"
     build+="-host-deps"
+}
+
+# Machine-specific build and test execution
+
+_bmcweb_stage_sources() {
+    local checkout=$1 sdk_src=$2 stage=$3
+    local directory=sdbusplus wrap="$checkout/subprojects/sdbusplus.wrap"
+    if [[ -f "$wrap" ]]; then
+        local configured
+        configured=$(sed -nE 's/^directory[[:space:]]*=[[:space:]]*([^[:space:]]+).*/\1/p' "$wrap")
+        directory=${configured:-sdbusplus}
+    fi
+    [[ "$directory" =~ ^[a-zA-Z0-9_-][a-zA-Z0-9._-]*$ ]] || return 1
+    mkdir -p "$stage/subprojects/$directory" || return 1
+    # Mirror local bmcweb edits, leaving the SDK dependency in its own directory.
+    rsync -a --delete --exclude=.git --exclude='/build*/' --exclude='/oe-*' \
+        --exclude="/subprojects/$directory" "$checkout/" "$stage/" || return 1
+    rsync -rlpc --delete --exclude=.git "$sdk_src/" "$stage/subprojects/$directory/"
+}
+
+# Usage: bmcweb_test [MACHINE [TEST_EXECUTABLE [GTEST_FILTER]]]
+# Omitted arguments are prompted for. An empty filter runs the whole executable.
+bmcweb_test() (
+    local machine="${1:-}"
+    local target="${2:-}"
+    local filter="${3:-}"
+    local venv="${BMCWEB_TEST_VENV:-$HOME/.venvs/bmcweb-host-tests}"
+
+    if (( $# > 3 )); then
+        echo 'Usage: bmcweb_test [MACHINE [TEST_EXECUTABLE [GTEST_FILTER]]]' >&2
+        return 2
+    fi
+    if [[ -z "$machine" ]]; then
+        read -r -p 'OpenBMC machine: ' machine || return 1
+    fi
+    if [[ -z "$target" ]]; then
+        read -r -p 'Test executable (e.g. registries_test): ' target || return 1
+    fi
+    if [[ -z "$machine" || -z "$target" ]]; then
+        echo 'Machine and test executable are required.' >&2
+        return 2
+    fi
+    if (( $# < 3 )); then
+        read -r -p 'Google Test filter (Enter for all tests): ' filter || return 1
+    fi
+
+    local root="${OPENBMC_ROOT:-$HOME/Projects/openbmc_aspeed_sdk_11.03/openbmc-11.03}"
+    local src="$root/build/$machine/workspace/sources/bmcweb"
+    local work="$root/build/$machine/bmcweb-host-tests"
+    local build="$work/build"
+
+    if [[ ! -f "$src/meson.build" ]]; then
+        printf 'Cannot find the bmcweb checkout at %s\n' "$src" >&2
+        return 1
+    fi
+
+    # Read the selected machine's registry inputs before changing host tools.
+    local recipe_info registry_files native_root
+    recipe_info=$(
+        set -o pipefail
+        cd "$root" || exit 1
+        source ./setup "$machine" >&2 || exit 1
+        bitbake -c patch sdbusplus >&2 || exit 1
+        bitbake -e sdbusplus | sed -n '/^S="/p' || exit 1
+        bitbake -e bmcweb |
+            sed -n '/^EXTRA_OEMESON="/p; /^RECIPE_SYSROOT_NATIVE="/p'
+    ) || return 1
+
+    registry_files=$(sed -n '/^EXTRA_OEMESON="/s/.*-Dpdi-registry-files=\([^"[:space:]]*\).*/\1/p' <<< "$recipe_info")
+    native_root=$(sed -n 's/^RECIPE_SYSROOT_NATIVE="\(.*\)"$/\1/p' <<< "$recipe_info")
+
+    local sdk_src
+    sdk_src=$(sed -n 's/^S="\(.*\)"$/\1/p' <<< "$recipe_info")
+    if [[ ! -f "$sdk_src/meson.build" || -z "$sdk_src" ]]; then
+        printf 'Cannot find the patched sdbusplus source for %s at %s\n' "$machine" "$sdk_src" >&2
+        return 1
+    fi
+
+    mkdir -p "$work" || return 1
+    exec 8>"$work/run.lock" || return 1
+    flock 8 || return 1
+    _bmcweb_stage_sources "$src" "$sdk_src" "$work/source" || return 1
+    src="$work/source"
+    printf 'Using %s sdbusplus from %s\n' "$machine" "$sdk_src"
+
+    local -a setup_args=(--force-fallback-for=sdbusplus)
+    if [[ -n "$registry_files" ]]; then
+        setup_args+=("-Dpdi-registry-files=$registry_files")
+    fi
+    _bmcweb_prepare_host || return 1
     if [[ -f "$build/meson-private/coredata.dat" ]]; then
         setup_args+=(--reconfigure)
     fi
 
     "$venv/bin/meson" setup "${setup_args[@]}" "$build" "$src" \
         -Dtests=enabled \
-        -Dredfish-dbus-log=enabled \
-        "-Dpdi-registry-files=$registry_files" || return 1
+        -Dredfish-dbus-log=enabled || return 1
 
     ninja -C "$build" "test/$target" || return 1
     "$build/test/$target" --gtest_filter="${filter:-*}"
