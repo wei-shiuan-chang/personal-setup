@@ -64,7 +64,7 @@ For Bash on Linux, WSL, or Git Bash, add the following at the end of `~/.bashrc`
 # ── Personal settings ────────────────────────────────────────────────────────
 
 OPENBMC_ROOT="${OPENBMC_ROOT:-$HOME/Projects/openbmc_aspeed_sdk_11.03/openbmc-11.03}"
-BMC_QEMU_SCRIPT="${BMC_QEMU_SCRIPT:-$HOME/Desktop/scripts/start_qemu.sh}"
+BMC_SCRIPTS_DIR="$HOME/Desktop/scripts"
 
 # ── Interactive prompt ───────────────────────────────────────────────────────
 
@@ -124,17 +124,18 @@ patch_check() {
 }
 
 # Load the bmcweb host-test helpers from the personal scripts directory.
-source "${BMCWEB_TEST_SCRIPT:-$HOME/Desktop/scripts/bmcweb_tests.sh}"
+source "${BMCWEB_TEST_SCRIPT:-$BMC_SCRIPTS_DIR/bmcweb_tests.sh}"
 
 # ── OpenBMC QEMU ─────────────────────────────────────────────────────────────
 
 bmc_qemu() {
-    if [[ ! -r "$BMC_QEMU_SCRIPT" ]]; then
-        printf 'Cannot read QEMU launcher: %s\n' "$BMC_QEMU_SCRIPT" >&2
+    local launcher="${BMC_QEMU_SCRIPT:-$BMC_SCRIPTS_DIR/start_qemu.sh}"
+    if [[ ! -r "$launcher" ]]; then
+        printf 'Cannot read QEMU launcher: %s\n' "$launcher" >&2
         return 1
     fi
 
-    OPENBMC_ROOT="$OPENBMC_ROOT" bash "$BMC_QEMU_SCRIPT" "$@"
+    OPENBMC_ROOT="$OPENBMC_ROOT" bash "$launcher" "$@"
 }
 
 # ── Help ─────────────────────────────────────────────────────────────────────
@@ -164,7 +165,7 @@ Both prompts show `user@host path (branch)` inside a Git repository and omit the
 
 ### Run bmcweb host tests
 
-Place `bmcweb_tests.sh` in `~/Desktop/scripts/` on the Linux build host, or set
+Place `bmcweb_tests.sh` and `start_qemu.sh` in the directory set by `BMC_SCRIPTS_DIR` on the Linux build host. To move both scripts, edit that one setting in `~/.bashrc`. To override only the test script, set
 `BMCWEB_TEST_SCRIPT` to its path before loading the Bash block. The script
 defines both test commands. The first test run prepares Meson and requests.
 For a recognized GCC minimum, it checks installed compilers and then uses npm
