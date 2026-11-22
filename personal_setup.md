@@ -166,7 +166,7 @@ Both prompts show `user@host path (branch)` inside a Git repository and omit the
 ### Run bmcweb host tests
 
 Place `bmcweb_tests.sh` and `start_qemu.sh` in the directory set by `BMC_SCRIPTS_DIR` on the Linux build host. To move the scripts, edit that one setting in `~/.bashrc`. To override only the test script, set
-`BMCWEB_TEST_SCRIPT` to its path before loading the Bash block. Each run uses BitBake’s patched sdbusplus source for the selected machine and stages the native build under `build/MACHINE/bmcweb-host-tests` using rsync. The first test run prepares Meson and requests.
+`BMCWEB_TEST_SCRIPT` to its path before loading the Bash block. A full run uses BitBake’s patched sdbusplus source for the selected machine and stages the native build under `build/MACHINE/bmcweb-host-tests` using rsync. The first test run prepares Meson and requests.
 For a recognized GCC minimum, it checks installed compilers and then uses npm
 and npx to install a matching xPack GCC in the user store if necessary.
 Set `BMCWEB_GCC_ROOT` to select an existing toolchain explicitly.
@@ -184,6 +184,17 @@ overrides their directory.
 ```bash
 bmcweb_test cm14ep3r registries_test 'DbusEventMapping.*'
 ```
+
+After the first full setup for a machine, use `--fast` for edits to bmcweb
+and its tests. It syncs the checkout, reuses the staged subprojects and host
+environment, and runs an incremental Ninja build before executing the test.
+
+```bash
+bmcweb_test --fast cm14ep3r registries_test 'DbusEventMapping.*'
+```
+
+Run without `--fast` after changing SDK recipes, registry inputs outside the
+checkout, anything under `subprojects/`, or host tools and dependencies.
 
 ### Run OpenBMC in QEMU
 

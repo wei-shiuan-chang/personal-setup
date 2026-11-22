@@ -273,6 +273,12 @@ _bmcweb_prepare_host() {
 
 # Machine-specific build and test execution
 
+_bmcweb_sync_checkout() {
+    local checkout=$1 stage=$2 exclude=$3
+    rsync -a --delete --exclude=.git --exclude='/build*/' --exclude='/oe-*' \
+        --exclude="$exclude" "$checkout/" "$stage/"
+}
+
 _bmcweb_stage_sources() {
     local checkout=$1 sdk_src=$2 stage=$3
     local directory=sdbusplus wrap="$checkout/subprojects/sdbusplus.wrap"
@@ -284,21 +290,67 @@ _bmcweb_stage_sources() {
     [[ "$directory" =~ ^[a-zA-Z0-9_-][a-zA-Z0-9._-]*$ ]] || return 1
     mkdir -p "$stage/subprojects/$directory" || return 1
     # Mirror local bmcweb edits, leaving the SDK dependency in its own directory.
-    rsync -a --delete --exclude=.git --exclude='/build*/' --exclude='/oe-*' \
-        --exclude="/subprojects/$directory" "$checkout/" "$stage/" || return 1
+    _bmcweb_sync_checkout "$checkout" "$stage" "/subprojects/$directory" || return 1
     rsync -rlpc --delete --exclude=.git "$sdk_src/" "$stage/subprojects/$directory/"
 }
 
-# Usage: bmcweb_test [MACHINE [TEST_EXECUTABLE [GTEST_FILTER]]]
+# Configures the caller's build and host environment for this machine.
+_bmcweb_configure() {
+    # Read the selected machine's registry inputs before changing host tools.
+    local recipe_info registry_files native_root
+    recipe_info=$(
+        set -o pipefail
+        cd "$root" || exit 1
+        source ./setup "$machine" >&2 || exit 1
+        bitbake -c patch sdbusplus >&2 || exit 1
+        bitbake -e sdbusplus | sed -n '/^S="/p' || exit 1
+        bitbake -e bmcweb |
+            sed -n '/^EXTRA_OEMESON="/p; /^RECIPE_SYSROOT_NATIVE="/p'
+    ) || return 1
+
+    registry_files=$(sed -n '/^EXTRA_OEMESON="/s/.*-Dpdi-registry-files=\([^"[:space:]]*\).*/\1/p' <<< "$recipe_info")
+    native_root=$(sed -n 's/^RECIPE_SYSROOT_NATIVE="\(.*\)"$/\1/p' <<< "$recipe_info")
+
+    local sdk_src
+    sdk_src=$(sed -n 's/^S="\(.*\)"$/\1/p' <<< "$recipe_info")
+    if [[ ! -f "$sdk_src/meson.build" || -z "$sdk_src" ]]; then
+        printf 'Cannot find the patched sdbusplus source for %s at %s\n' "$machine" "$sdk_src" >&2
+        return 1
+    fi
+
+    _bmcweb_stage_sources "$src" "$sdk_src" "$work/source" || return 1
+    src="$work/source"
+    printf 'Using %s sdbusplus from %s\n' "$machine" "$sdk_src"
+
+    local -a setup_args=(--force-fallback-for=sdbusplus)
+    if [[ -n "$registry_files" ]]; then
+        setup_args+=("-Dpdi-registry-files=$registry_files")
+    fi
+    _bmcweb_prepare_host || return 1
+    if [[ -f "$build/meson-private/coredata.dat" ]]; then
+        setup_args+=(--reconfigure)
+    fi
+
+    "$venv/bin/meson" setup "${setup_args[@]}" "$build" "$src" \
+        -Dtests=enabled \
+        -Dredfish-dbus-log=enabled || return 1
+}
+
+# Usage: bmcweb_test [--fast] [MACHINE [TEST_EXECUTABLE [GTEST_FILTER]]]
 # Omitted arguments are prompted for. An empty filter runs the whole executable.
 bmcweb_test() (
+    local fast=false
+    if [[ ${1:-} == --fast ]]; then
+        fast=true
+        shift
+    fi
     local machine="${1:-}"
     local target="${2:-}"
     local filter="${3:-}"
     local venv="${BMCWEB_TEST_VENV:-$HOME/.venvs/bmcweb-host-tests}"
 
     if (( $# > 3 )); then
-        echo 'Usage: bmcweb_test [MACHINE [TEST_EXECUTABLE [GTEST_FILTER]]]' >&2
+        echo 'Usage: bmcweb_test [--fast] [MACHINE [TEST_EXECUTABLE [GTEST_FILTER]]]' >&2
         return 2
     fi
     if [[ -z "$machine" ]]; then
@@ -325,48 +377,38 @@ bmcweb_test() (
         return 1
     fi
 
-    # Read the selected machine's registry inputs before changing host tools.
-    local recipe_info registry_files native_root
-    recipe_info=$(
-        set -o pipefail
-        cd "$root" || exit 1
-        source ./setup "$machine" >&2 || exit 1
-        bitbake -c patch sdbusplus >&2 || exit 1
-        bitbake -e sdbusplus | sed -n '/^S="/p' || exit 1
-        bitbake -e bmcweb |
-            sed -n '/^EXTRA_OEMESON="/p; /^RECIPE_SYSROOT_NATIVE="/p'
-    ) || return 1
-
-    registry_files=$(sed -n '/^EXTRA_OEMESON="/s/.*-Dpdi-registry-files=\([^"[:space:]]*\).*/\1/p' <<< "$recipe_info")
-    native_root=$(sed -n 's/^RECIPE_SYSROOT_NATIVE="\(.*\)"$/\1/p' <<< "$recipe_info")
-
-    local sdk_src
-    sdk_src=$(sed -n 's/^S="\(.*\)"$/\1/p' <<< "$recipe_info")
-    if [[ ! -f "$sdk_src/meson.build" || -z "$sdk_src" ]]; then
-        printf 'Cannot find the patched sdbusplus source for %s at %s\n' "$machine" "$sdk_src" >&2
-        return 1
-    fi
-
     mkdir -p "$work" || return 1
     exec 8>"$work/run.lock" || return 1
     flock 8 || return 1
-    _bmcweb_stage_sources "$src" "$sdk_src" "$work/source" || return 1
-    src="$work/source"
-    printf 'Using %s sdbusplus from %s\n' "$machine" "$sdk_src"
-
-    local -a setup_args=(--force-fallback-for=sdbusplus)
-    if [[ -n "$registry_files" ]]; then
-        setup_args+=("-Dpdi-registry-files=$registry_files")
+    local state="$work/fast-build-v1"
+    local -a saved=() env_args=()
+    if "$fast"; then
+        if [[ -s "$state" ]]; then
+            mapfile -d '' -t saved < "$state" || return 1
+        fi
+        if (( ${#saved[@]} < 2 )) || [[ ! -f "${saved[0]}/build.ninja" ||
+              ! -f "$work/source/meson.build" ]]; then
+            echo "Run bmcweb_test without --fast once for $machine to prepare its build." >&2
+            return 1
+        fi
+        build=${saved[0]}
+        export PATH="${saved[1]}/bin:$PATH"
+        env_args=("${saved[@]:2}")
+        _bmcweb_sync_checkout "$src" "$work/source" /subprojects || return 1
+    else
+        # An interrupted setup must not leave the previous build marked ready.
+        : > "$state" || return 1
+        _bmcweb_configure || return 1
+        local key
+        for key in CC CXX CMAKE PKG_CONFIG PKG_CONFIG_PATH PKG_CONFIG_LIBDIR PKG_CONFIG_SYSROOT_DIR LD_LIBRARY_PATH; do
+            if [[ -v "$key" ]]; then
+                env_args+=("$key=${!key}")
+            fi
+        done
+        printf '%s\0' "$build" "$venv" "${env_args[@]}" > "$state.tmp" &&
+            mv -- "$state.tmp" "$state" || return 1
     fi
-    _bmcweb_prepare_host || return 1
-    if [[ -f "$build/meson-private/coredata.dat" ]]; then
-        setup_args+=(--reconfigure)
-    fi
 
-    "$venv/bin/meson" setup "${setup_args[@]}" "$build" "$src" \
-        -Dtests=enabled \
-        -Dredfish-dbus-log=enabled || return 1
-
-    ninja -C "$build" "test/$target" || return 1
-    "$build/test/$target" --gtest_filter="${filter:-*}"
+    env "${env_args[@]}" ninja -C "$build" "test/$target" || return 1
+    env "${env_args[@]}" "$build/test/$target" --gtest_filter="${filter:-*}"
 )
