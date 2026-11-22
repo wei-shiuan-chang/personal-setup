@@ -150,6 +150,7 @@ patch_check PATCH                       Check whether a Git patch applies.
 bmcweb_test_env [VERSION_SPEC]          Set up Meson and requests.
 bmcweb_test [MACHINE [TARGET [FILTER]]] Incrementally build and run a host test.
 bmcweb_test --setup [MACHINE [TARGET [FILTER]]] Prepare the machine build and run the test.
+bmcweb_test --gdb [MACHINE [TARGET [FILTER]]]   Open the selected test in GDB.
                                         Omitted arguments are prompted for.
 BMCWEB_GCC_ROOT=/path bmcweb_test --setup ...   Use a specific host GCC toolchain.
 
@@ -196,6 +197,21 @@ bmcweb_test cm14ep3r registries_test 'DbusEventMapping.*'
 
 Run with `--setup` after changing SDK recipes, registry inputs outside the
 checkout, anything under `subprojects/`, or host tools and dependencies.
+
+To debug a test on the build host, start GDB and set a source breakpoint
+before running the selected test. This requires GDB on the host and debug
+symbols for source-level inspection.
+
+```bash
+bmcweb_test --gdb cm14ep3r registries_test 'DbusEventMapping.UnmappedLiteonEventKeepsMessageAndGetsCompanyMessageId'
+```
+
+```gdb
+break registries_test.cpp:56
+run
+print event
+step
+```
 
 ### Run OpenBMC in QEMU
 

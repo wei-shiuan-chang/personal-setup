@@ -336,24 +336,27 @@ _bmcweb_configure() {
         -Dredfish-dbus-log=enabled || return 1
 }
 
-# Usage: bmcweb_test [--setup] [MACHINE [TEST_EXECUTABLE [GTEST_FILTER]]]
+# Usage: bmcweb_test [--setup] [--gdb] [MACHINE [TEST_EXECUTABLE [GTEST_FILTER]]]
 # Omitted arguments are prompted for. An empty filter runs the whole executable.
 bmcweb_test() (
     local setup=false
-    if [[ ${1:-} == --setup ]]; then
-        setup=true
+    local -a debugger=()
+    while (( $# )); do
+        case "$1" in
+            --setup) setup=true ;;
+            --gdb) debugger=(gdb --args) ;;
+            --fast) ;; # Legacy incremental invocation.
+            *) break ;;
+        esac
         shift
-    elif [[ ${1:-} == --fast ]]; then
-        # Compatibility with the previous incremental invocation.
-        shift
-    fi
+    done
     local machine="${1:-}"
     local target="${2:-}"
     local filter="${3:-}"
     local venv="${BMCWEB_TEST_VENV:-$HOME/.venvs/bmcweb-host-tests}"
 
     if (( $# > 3 )); then
-        echo 'Usage: bmcweb_test [--setup] [MACHINE [TEST_EXECUTABLE [GTEST_FILTER]]]' >&2
+        echo 'Usage: bmcweb_test [--setup] [--gdb] [MACHINE [TEST_EXECUTABLE [GTEST_FILTER]]]' >&2
         return 2
     fi
     if [[ -z "$machine" ]]; then
@@ -413,5 +416,5 @@ bmcweb_test() (
     fi
 
     env "${env_args[@]}" ninja -C "$build" "test/$target" || return 1
-    env "${env_args[@]}" "$build/test/$target" --gtest_filter="${filter:-*}"
+    env "${env_args[@]}" "${debugger[@]}" "$build/test/$target" --gtest_filter="${filter:-*}"
 )
