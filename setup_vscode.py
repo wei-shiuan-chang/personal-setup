@@ -944,7 +944,6 @@ def add_bmcweb_debug(
         "program": str(launch_dir / "test"),
         "args": ["--gtest_filter=${input:bmcwebGtestFilter}"],
         "cwd": str(checkout),
-        "preLaunchTask": label,
         "sourceFileMap": {str(work / "source"): str(checkout),
                           "../source": str(checkout)},
     }
@@ -952,7 +951,9 @@ def add_bmcweb_debug(
               "description": "Google Test filter", "default": "*"}
     for section, key, field, item in [
         ("tasks", "tasks", "label", task),
-        ("launch", "configurations", "name", launch),
+        ("launch", "configurations", "name", {**launch, "preLaunchTask": label}),
+        ("launch", "configurations", "name",
+         {**launch, "name": f"Debug last build ({target})"}),
         ("launch", "inputs", "id", prompt),
     ]:
         group = config.setdefault(section, {})

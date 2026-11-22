@@ -153,7 +153,8 @@ bmcweb_test --setup [MACHINE [TARGET [FILTER]]] Prepare the machine build and ru
 bmcweb_test --gdb [MACHINE [TARGET [FILTER]]]   Open the selected test in GDB.
                                         Omitted arguments are prompted for.
 BMCWEB_GCC_ROOT=/path bmcweb_test --setup ...   Use a specific host GCC toolchain.
-VS Code F5: select "Debug bmcweb host test (registries_test)" in the generated workspace.
+VS Code F5: "Debug bmcweb host test (registries_test)" builds before debugging.
+            "Debug last build (registries_test)" reuses the existing executable.
 
 bmc_qemu                                Prompt for an OpenBMC machine.
 bmc_qemu MACHINE [OPTIONS]              Start QEMU for that machine.
@@ -236,7 +237,10 @@ and press **F5**. Enter a Google Test filter such as `DbusEventMapping.*`,
 or accept `*` to run the whole executable. The build task prepares a fresh
 machine on first use, syncs edits and builds with Ninja. VS Code then starts
 GDB with the host runtime environment and maps the staged sources back to
-the checkout. Later F5 runs use incremental builds. After SDK or dependency
+the checkout. After the first successful F5 build, select **Debug last build (registries_test)**
+to rerun the executable with VS Code breakpoints and a new filter.
+It skips source sync and compilation. After editing code, select the original
+build-and-debug configuration to refresh the binary and its line information. After SDK or dependency
 changes, refresh with `bmcweb_test --setup` as described above.
 
 For another machine, run the two commands from its own `workspace/sources`.
