@@ -259,6 +259,35 @@ To add a different test executable to the F5 dropdown, rerun the generator
 with `--bmcweb-debug --test-target <executable>`. Terminal debugging with
 `bmcweb_test --gdb` is also available.
 
+#### Bash shortcut and additional test files
+
+For scripts copied to `~/Desktop/scripts`, add this alias to `~/.bashrc` once:
+
+```bash
+alias bmcweb_f5='python3 ~/Desktop/scripts/setup_vscode.py --bmcweb-debug'
+```
+
+Load it with `source ~/.bashrc`. From the selected machine's
+`workspace/sources` or `workspace/sources/bmcweb`, run:
+
+```bash
+bmcweb_f5
+bmcweb_f5 --test-target event_log_test
+```
+
+The second command adds build-and-debug and last-build F5 entries for
+`event_log_test` alongside the existing entries. Use the test executable
+name from your checkout. For example, when `test/meson.build` creates each
+executable with `fs.stem(test_src)`, `event_log_test.cpp` builds as
+`event_log_test`. To debug it, select **Debug bmcweb host test (event_log_test)**.
+
+For a new standalone test file, follow the checkout's test registration
+pattern. In the layout above, add its path relative to `test/` to the
+unit-test source list in `test/meson.build`. The next **Run all bmcweb host
+tests** includes the registered executable automatically. New Google Test
+cases added to an existing registered file run with that executable's
+`*` filter after rebuilding.
+
 ### Run OpenBMC in QEMU
 
 Run these commands on the machine that holds the OpenBMC SDK and build artifacts. For the company SDK, load the helpers on the Linux build host after connecting over SSH. Set `BMC_QEMU_SCRIPT` to the path of your `start_qemu.sh` if it lives elsewhere.
