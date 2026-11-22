@@ -153,6 +153,7 @@ bmcweb_test --setup [MACHINE [TARGET [FILTER]]] Prepare the machine build and ru
 bmcweb_test --gdb [MACHINE [TARGET [FILTER]]]   Open the selected test in GDB.
                                         Omitted arguments are prompted for.
 BMCWEB_GCC_ROOT=/path bmcweb_test --setup ...   Use a specific host GCC toolchain.
+VS Code F5: select "Debug bmcweb host test (registries_test)" in the generated workspace.
 
 bmc_qemu                                Prompt for an OpenBMC machine.
 bmc_qemu MACHINE [OPTIONS]              Start QEMU for that machine.
@@ -212,6 +213,36 @@ run
 print event
 step
 ```
+
+### Debug a bmcweb host test with VS Code F5
+
+On the Linux build host, install GDB and enable Microsoft's C/C++ extension
+in the remote VS Code window. From the selected machine's
+`build/<machine>/workspace/sources` directory, run:
+
+```bash
+python3 ~/personal-setup/setup_vscode.py --bmcweb-debug
+code devtool-sources.code-workspace
+```
+
+This configures debugging in the workspace file outside the bmcweb checkout.
+The generator finds `bmcweb_tests.sh` beside itself. To use another copy,
+set `BMCWEB_TEST_SCRIPT` when running the generator. The normal multi-root
+setup also generates the debug configuration.
+
+Open the test in the **bmcweb** folder, click the gutter at an executable
+line, select **Debug bmcweb host test (registries_test)** in Run and Debug,
+and press **F5**. Enter a Google Test filter such as `DbusEventMapping.*`,
+or accept `*` to run the whole executable. The build task prepares a fresh
+machine on first use, syncs edits and builds with Ninja. VS Code then starts
+GDB with the host runtime environment and maps the staged sources back to
+the checkout. Later F5 runs use incremental builds. After SDK or dependency
+changes, refresh with `bmcweb_test --setup` as described above.
+
+For another machine, run the two commands from its own `workspace/sources`.
+To add a different test executable to the F5 dropdown, rerun the generator
+with `--bmcweb-debug --test-target <executable>`. Terminal debugging with
+`bmcweb_test --gdb` is also available.
 
 ### Run OpenBMC in QEMU
 

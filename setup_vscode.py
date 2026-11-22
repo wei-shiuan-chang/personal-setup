@@ -913,10 +913,72 @@ def configure_workspace(
             )
 
 
-def configure_multi_root(sources_directory: Path, dry_run: bool) -> None:
+def add_bmcweb_debug(
+    config: dict[str, Any], sources: Path, target: str
+) -> None:
+    machine_build = sources.parents[1]
+    sdk = machine_build.parent.parent
+    checkout = sources / "bmcweb"
+    work = machine_build / "bmcweb-host-tests"
+    launch_dir = work / "vscode" / target
+    runner = Path(os.environ.get("BMCWEB_TEST_SCRIPT") or
+                  Path(__file__).with_name("bmcweb_tests.sh")).expanduser().resolve()
+    if not runner.is_file():
+        raise SetupError(f"Cannot find the bmcweb host-test runner: {runner}")
+    label = f"Build bmcweb host test ({target})"
+    task = {
+        "label": label,
+        "type": "process",
+        "command": "bash",
+        "args": ["-c", 'source "$1" && bmcweb_test --vscode-build "$2" "$3" "*"',
+                 "bmcweb-vscode", str(runner), machine_build.name, target],
+        "options": {"cwd": str(checkout), "env": {"OPENBMC_ROOT": str(sdk)}},
+        "problemMatcher": ["$gcc"],
+    }
+    launch = {
+        "name": f"Debug bmcweb host test ({target})",
+        "type": "cppdbg",
+        "request": "launch",
+        "MIMode": "gdb",
+        "miDebuggerPath": str(launch_dir / "gdb"),
+        "program": str(launch_dir / "test"),
+        "args": ["--gtest_filter=${input:bmcwebGtestFilter}"],
+        "cwd": str(checkout),
+        "preLaunchTask": label,
+        "sourceFileMap": {str(work / "source"): str(checkout),
+                          "../source": str(checkout)},
+    }
+    prompt = {"id": "bmcwebGtestFilter", "type": "promptString",
+              "description": "Google Test filter", "default": "*"}
+    for section, key, field, item in [
+        ("tasks", "tasks", "label", task),
+        ("launch", "configurations", "name", launch),
+        ("launch", "inputs", "id", prompt),
+    ]:
+        group = config.setdefault(section, {})
+        if not isinstance(group, dict):
+            raise SetupError(f"Invalid workspace section: {section}")
+        group.setdefault("version", "2.0.0" if section == "tasks" else "0.2.0")
+        items = group.setdefault(key, [])
+        if not isinstance(items, list):
+            raise SetupError(f"Invalid workspace list: {section}.{key}")
+        for index, existing in enumerate(items):
+            if isinstance(existing, dict) and existing.get(field) == item[field]:
+                items[index] = item
+                break
+        else:
+            items.append(item)
+
+
+def configure_multi_root(
+    sources_directory: Path, dry_run: bool, *, debug_only: bool = False,
+    test_target: str = "registries_test",
+) -> None:
+    sources_directory = sources_directory.expanduser().resolve()
     source_roots = discover_source_roots(sources_directory)
-    for source_root in source_roots:
-        configure_workspace(source_root, None, dry_run)
+    if not debug_only:
+        for source_root in source_roots:
+            configure_workspace(source_root, None, dry_run)
 
     workspace_file = sources_directory.resolve() / "devtool-sources.code-workspace"
     folders = [
@@ -939,7 +1001,14 @@ def configure_multi_root(sources_directory: Path, dry_run: bool) -> None:
             )
         existing = loaded
     merged = dict(existing)
-    merged["folders"] = folders
+    if not debug_only or "folders" not in merged:
+        merged["folders"] = folders
+    keys = ["folders"] if not debug_only or "folders" not in existing else []
+    if (sources_directory / "bmcweb/meson.build").is_file():
+        add_bmcweb_debug(merged, sources_directory, test_target)
+        keys.extend(["launch", "tasks"])
+    elif debug_only:
+        raise SetupError(f"Missing bmcweb checkout under {sources_directory}")
     if dry_run:
         print(
             json.dumps(merged, indent=2) + "\n",
@@ -954,7 +1023,7 @@ def configure_multi_root(sources_directory: Path, dry_run: bool) -> None:
             file=sys.stderr,
         )
     else:
-        write_settings(workspace_file, merged, ["folders"], original_workspace)
+        write_settings(workspace_file, merged, keys, original_workspace)
         print(f"Updated {workspace_file}")
         print(f"Next: open the workspace with: code {workspace_file}")
         print(
@@ -1000,7 +1069,13 @@ def main() -> int:
         action="store_true",
         help="print the merged settings without writing a file",
     )
+    parser.add_argument("--bmcweb-debug", action="store_true",
+                        help="configure workspace-level F5 debugging only")
+    parser.add_argument("--test-target", default="registries_test",
+                        help="bmcweb test executable for the F5 configuration")
     args = parser.parse_args()
+    if not re.fullmatch(r"[A-Za-z0-9_][A-Za-z0-9_.-]*", args.test_target):
+        parser.error("--test-target must be a test executable name")
 
     try:
         selected_workspace = args.workspace or Path.cwd()
@@ -1008,16 +1083,23 @@ def main() -> int:
             selected_workspace.name == "sources"
             and selected_workspace.parent.name == "workspace"
         )
-        if args.multi_root or is_sources_directory:
+        if args.bmcweb_debug and selected_workspace.resolve().name == "bmcweb":
+            selected_workspace = selected_workspace.resolve().parent
+        if args.bmcweb_debug or args.multi_root or is_sources_directory:
             if args.compile_commands is not None:
                 raise SetupError(
                     "--compile-commands cannot be used with --multi-root; "
                     "each recipe discovers its own compilation database."
                 )
-            configure_multi_root(selected_workspace, args.dry_run)
+            configure_multi_root(selected_workspace, args.dry_run, debug_only=args.bmcweb_debug,
+                                 test_target=args.test_target)
         else:
             workspace = discover_workspace(args.workspace)
             configure_workspace(workspace, args.compile_commands, args.dry_run)
+            if (workspace.name == "bmcweb" and workspace.parent.name == "sources"
+                    and workspace.parent.parent.name == "workspace"):
+                configure_multi_root(workspace.parent, args.dry_run, debug_only=True,
+                                     test_target=args.test_target)
     except SetupError as error:
         print(f"Error: {error}", file=sys.stderr)
         return 1

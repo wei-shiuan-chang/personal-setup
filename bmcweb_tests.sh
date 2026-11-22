@@ -339,12 +339,13 @@ _bmcweb_configure() {
 # Usage: bmcweb_test [--setup] [--gdb] [MACHINE [TEST_EXECUTABLE [GTEST_FILTER]]]
 # Omitted arguments are prompted for. An empty filter runs the whole executable.
 bmcweb_test() (
-    local setup=false
+    local setup=false vscode_build=false
     local -a debugger=()
     while (( $# )); do
         case "$1" in
             --setup) setup=true ;;
             --gdb) debugger=(gdb --args) ;;
+            --vscode-build) vscode_build=true ;;
             --fast) ;; # Legacy incremental invocation.
             *) break ;;
         esac
@@ -387,6 +388,13 @@ bmcweb_test() (
     exec 8>"$work/run.lock" || return 1
     flock 8 || return 1
     local state="$work/fast-build-v1"
+    if "$vscode_build" && ! command -v gdb >/dev/null; then
+        echo 'Install GDB on the VS Code build host or add it to the task PATH.' >&2
+        return 1
+    fi
+    if "$vscode_build" && [[ ! -s "$state" ]]; then
+        setup=true
+    fi
     local -a saved=() env_args=()
     if ! "$setup"; then
         if [[ -s "$state" ]]; then
@@ -416,5 +424,21 @@ bmcweb_test() (
     fi
 
     env "${env_args[@]}" ninja -C "$build" "test/$target" || return 1
+    if "$vscode_build"; then
+        local launch_dir="$work/vscode/$target"
+        mkdir -p "$launch_dir" || return 1
+        ln -sfnT "$build/test/$target" "$launch_dir/test" || return 1
+        # VS Code starts GDB in a separate process after the build task exits.
+        # Preserve the same runtime/toolchain environment as the terminal run.
+        (
+            umask 077
+            printf '#!/usr/bin/env bash\nexec env ' &&
+                printf '%q ' "PATH=$PATH" "${env_args[@]}" &&
+                printf 'gdb "$@"\n'
+        ) > "$launch_dir/gdb.tmp" &&
+            chmod 700 "$launch_dir/gdb.tmp" &&
+            mv "$launch_dir/gdb.tmp" "$launch_dir/gdb"
+        return
+    fi
     env "${env_args[@]}" "${debugger[@]}" "$build/test/$target" --gtest_filter="${filter:-*}"
 )
