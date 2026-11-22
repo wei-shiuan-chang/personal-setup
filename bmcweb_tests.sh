@@ -115,9 +115,87 @@ bmcweb_test_env() {
         python3 -m venv "$venv" || return 1
     fi
 
-    "$venv/bin/python" -m pip install "meson${version}" requests || return 1
+    "$venv/bin/python" -m pip install "meson${version}" requests inflection Mako MarkupSafe || return 1
     "$venv/bin/meson" --version
 }
+
+# Prepare the private Debian/Ubuntu host prefix before configuring Meson.
+_bmcweb_prepare_libs() (
+    local deps=$1 lib=$2 src=$3 venv=$4
+    local cache
+    mkdir -p "$deps" || return 1
+    exec 9>"$deps/.bmcweb-prepare.lock" || return 1
+    flock 9 || return 1
+    cache=$(mktemp -d) || return 1
+    trap 'rm -rf -- "$cache"' EXIT
+
+    local -a packages=()
+    if [[ ! -r "$deps/usr/include/security/pam_appl.h" || ! -r "$lib/libpam.so" ]]; then
+        packages+=(libpam0g-dev libpam0g)
+    fi
+    if [[ ! -r "$deps/usr/include/systemd/sd-bus.h" || ! -r "$lib/libsystemd.so" ||
+          ! -r "$lib/pkgconfig/libsystemd.pc" ]]; then
+        packages+=(libsystemd-dev libsystemd0)
+    fi
+    if ! command -v "$PKG_CONFIG" >/dev/null && [[ ! -x "$deps/usr/bin/pkgconf" ]]; then
+        packages+=(pkgconf)
+        # Debian splits the binary and its runtime differently across releases.
+        local pkg
+        for pkg in pkgconf-bin libpkgconf3 libpkgconf7; do
+            if apt-cache show "$pkg" 2>/dev/null | grep '^Package:' >/dev/null; then
+                packages+=("$pkg")
+            fi
+        done
+    fi
+    if (( ${#packages[@]} )); then
+        (cd "$cache" && apt-get download "${packages[@]}") || return 1
+        local deb
+        for deb in "$cache"/*.deb; do
+            dpkg-deb -x "$deb" "$deps" || return 1
+        done
+    fi
+    # Some Ubuntu runtime packages install under /lib rather than /usr/lib.
+    local runtime base
+    for base in libpam libsystemd; do
+        if [[ ! -r "$lib/$base.so" ]]; then
+            for runtime in "$lib/$base.so.0" "$deps/lib/${lib##*/}/$base.so.0"; do
+                if [[ -r "$runtime" ]]; then
+                    ln -sfn "$runtime" "$lib/$base.so" || return 1
+                    break
+                fi
+            done
+        fi
+        [[ -r "$lib/$base.so" ]] || { echo "Missing host library: $lib/$base.so" >&2; return 1; }
+    done
+
+    if ! command -v "$PKG_CONFIG" >/dev/null; then
+        export PKG_CONFIG="$deps/usr/bin/pkgconf"
+    fi
+    "$PKG_CONFIG" --version >/dev/null || return 1
+
+    local wrap="$src/subprojects/nghttp2.wrap" directory required ngsrc
+    if [[ -f "$wrap" ]]; then
+        directory=$(sed -nE 's/^directory[[:space:]]*=[[:space:]]*([^[:space:]]+).*/\1/p' "$wrap")
+        ngsrc="$src/subprojects/${directory:-nghttp2}"
+        required=$(sed -nE 's/^revision[[:space:]]*=[[:space:]]*v?([0-9]+(\.[0-9]+)+)[[:space:]]*$/\1/p' "$wrap")
+        if [[ -z "$required" && "$directory" =~ ^nghttp2-([0-9]+(\.[0-9]+)+)$ ]]; then
+            required=${BASH_REMATCH[1]}
+        fi
+        if ! "$PKG_CONFIG" --atleast-version="${required:-0}" libnghttp2 ||
+           [[ ! -r "$deps/usr/include/nghttp2/nghttp2.h" ]] ||
+           [[ ! -r "$lib/libnghttp2.a" && ! -r "$lib/libnghttp2.so" ]]; then
+            if [[ ! -r "$ngsrc/CMakeLists.txt" ]]; then
+                (cd "$src" && "$venv/bin/meson" subprojects download nghttp2) || return 1
+            fi
+            "$CMAKE" -S "$ngsrc" -B "$cache/build" -G Ninja \
+                -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr \
+                "-DCMAKE_INSTALL_LIBDIR=lib/${lib##*/}" -DENABLE_LIB_ONLY=ON \
+                -DENABLE_STATIC_LIB=ON -DENABLE_SHARED_LIB=OFF || return 1
+            "$CMAKE" --build "$cache/build" || return 1
+            DESTDIR="$deps" "$CMAKE" --install "$cache/build" || return 1
+        fi
+    fi
+)
 
 # Usage: bmcweb_test [MACHINE [TEST_EXECUTABLE [GTEST_FILTER]]]
 # Omitted arguments are prompted for. An empty filter runs the whole executable.
@@ -155,19 +233,22 @@ bmcweb_test() (
     fi
 
     if [[ ! -x "$venv/bin/meson" ]] ||
-       ! "$venv/bin/python" -c 'import requests' 2>/dev/null; then
+       ! "$venv/bin/python" -c 'import requests, inflection, mako, markupsafe' 2>/dev/null; then
         bmcweb_test_env || return 1
     fi
 
     # Read the selected machine's registry inputs before changing host tools.
-    local registry_files
-    registry_files=$(
+    local recipe_info registry_files native_root
+    recipe_info=$(
         set -o pipefail
         cd "$root" || exit 1
         source ./setup "$machine" >&2 || exit 1
         bitbake -e bmcweb |
-            sed -n '/^EXTRA_OEMESON="/s/.*-Dpdi-registry-files=\([^"[:space:]]*\).*/\1/p'
+            sed -n '/^EXTRA_OEMESON="/p; /^RECIPE_SYSROOT_NATIVE="/p'
     ) || return 1
+
+    registry_files=$(sed -n '/^EXTRA_OEMESON="/s/.*-Dpdi-registry-files=\([^"[:space:]]*\).*/\1/p' <<< "$recipe_info")
+    native_root=$(sed -n 's/^RECIPE_SYSROOT_NATIVE="\(.*\)"$/\1/p' <<< "$recipe_info")
 
     if [[ -z "$registry_files" ]]; then
         printf 'No pdi-registry-files setting found for %s.\n' "$machine" >&2
@@ -184,6 +265,52 @@ bmcweb_test() (
     fi
 
     local -a setup_args=()
+    # Reuse the personal development packages from the cips host build.
+    local deps="${BMCWEB_HOST_DEPS:-$HOME/tools/bmcweb-host-deps}"
+    local triplet lib inc json native_bin
+    triplet=$(dpkg-architecture -qDEB_HOST_MULTIARCH) || return 1
+    lib="$deps/usr/lib/$triplet"
+    inc="$deps/usr/include"
+    native_bin="${BMCWEB_NATIVE_BIN:-${native_root:+$native_root/usr/bin}}"
+
+    export PKG_CONFIG_SYSROOT_DIR="$deps"
+    export PKG_CONFIG_LIBDIR="$lib/pkgconfig:$deps/usr/share/pkgconfig:/usr/share/pkgconfig"
+    export PKG_CONFIG_PATH=
+    if [[ -n "$native_bin" && -x "$native_bin/pkgconf" ]]; then
+        export PKG_CONFIG="$native_bin/pkgconf"
+    else
+        export PKG_CONFIG="${PKG_CONFIG:-pkg-config}"
+    fi
+    if [[ -n "$native_bin" && -x "$native_bin/cmake" ]]; then
+        export CMAKE="$native_bin/cmake"
+    else
+        export CMAKE="${CMAKE:-cmake}"
+    fi
+    if ! command -v "$CMAKE" >/dev/null; then
+        "$venv/bin/python" -m pip install cmake || return 1
+    fi
+    if ! command -v ninja >/dev/null; then
+        "$venv/bin/python" -m pip install ninja || return 1
+    fi
+    export LD_LIBRARY_PATH="${LD_LIBRARY_PATH:+$LD_LIBRARY_PATH:}$lib"
+    _bmcweb_prepare_libs "$deps" "$lib" "$src" "$venv" || return 1
+    if ! command -v "$PKG_CONFIG" >/dev/null; then
+        export PKG_CONFIG="$deps/usr/bin/pkgconf"
+    fi
+    local cpp_args="-I$inc -Wno-error=pedantic"
+    local json_wrap="$src/subprojects/nlohmann_json.wrap" json_dir
+    if [[ -f "$json_wrap" ]]; then
+        json_dir=$(sed -nE 's/^directory[[:space:]]*=[[:space:]]*(.*[^[:space:]])[[:space:]]*$/\1/p' "$json_wrap")
+        json="$src/subprojects/${json_dir:-nlohmann_json}/include"
+        if [[ ! -r "$json/nlohmann/json_fwd.hpp" ]]; then
+            (cd "$src" && "$venv/bin/meson" subprojects download nlohmann_json) || return 1
+        fi
+        [[ -r "$json/nlohmann/json_fwd.hpp" ]] || { echo "Missing json_fwd.hpp under $json" >&2; return 1; }
+        cpp_args+=" -I$json"
+    fi
+    setup_args+=("-Dcpp_args=$cpp_args" "-Dcpp_link_args=-L$lib")
+    printf 'Host dependencies: %s\n' "$deps"
+    build+="-host-deps"
     if [[ -f "$build/meson-private/coredata.dat" ]]; then
         setup_args+=(--reconfigure)
     fi

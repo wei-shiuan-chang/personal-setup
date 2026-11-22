@@ -64,7 +64,7 @@ For Bash on Linux, WSL, or Git Bash, add the following at the end of `~/.bashrc`
 # ── Personal settings ────────────────────────────────────────────────────────
 
 OPENBMC_ROOT="${OPENBMC_ROOT:-$HOME/Projects/openbmc_aspeed_sdk_11.03/openbmc-11.03}"
-BMC_SCRIPTS_DIR="$HOME/Desktop/scripts"
+BMC_QEMU_SCRIPT="${BMC_QEMU_SCRIPT:-$HOME/Desktop/scripts/start_qemu.sh}"
 
 # ── Interactive prompt ───────────────────────────────────────────────────────
 
@@ -124,18 +124,17 @@ patch_check() {
 }
 
 # Load the bmcweb host-test helpers from the personal scripts directory.
-source "${BMCWEB_TEST_SCRIPT:-$BMC_SCRIPTS_DIR/bmcweb_tests.sh}"
+source "${BMCWEB_TEST_SCRIPT:-$HOME/Desktop/scripts/bmcweb_tests.sh}"
 
 # ── OpenBMC QEMU ─────────────────────────────────────────────────────────────
 
 bmc_qemu() {
-    local launcher="${BMC_QEMU_SCRIPT:-$BMC_SCRIPTS_DIR/start_qemu.sh}"
-    if [[ ! -r "$launcher" ]]; then
-        printf 'Cannot read QEMU launcher: %s\n' "$launcher" >&2
+    if [[ ! -r "$BMC_QEMU_SCRIPT" ]]; then
+        printf 'Cannot read QEMU launcher: %s\n' "$BMC_QEMU_SCRIPT" >&2
         return 1
     fi
 
-    OPENBMC_ROOT="$OPENBMC_ROOT" bash "$launcher" "$@"
+    OPENBMC_ROOT="$OPENBMC_ROOT" bash "$BMC_QEMU_SCRIPT" "$@"
 }
 
 # ── Help ─────────────────────────────────────────────────────────────────────
@@ -165,12 +164,22 @@ Both prompts show `user@host path (branch)` inside a Git repository and omit the
 
 ### Run bmcweb host tests
 
-Place `bmcweb_tests.sh` and `start_qemu.sh` in the directory set by `BMC_SCRIPTS_DIR` on the Linux build host. To move both scripts, edit that one setting in `~/.bashrc`. To override only the test script, set
+Place `bmcweb_tests.sh` in `~/Desktop/scripts/` on the Linux build host, or set
 `BMCWEB_TEST_SCRIPT` to its path before loading the Bash block. The script
 defines both test commands. The first test run prepares Meson and requests.
 For a recognized GCC minimum, it checks installed compilers and then uses npm
 and npx to install a matching xPack GCC in the user store if necessary.
 Set `BMCWEB_GCC_ROOT` to select an existing toolchain explicitly.
+
+On the company Ubuntu host, the first run downloads missing PAM and systemd
+development/runtime packages into `~/tools/bmcweb-host-deps` (override with
+`BMCWEB_HOST_DEPS`). The helper prepares requests, Mako, MarkupSafe and
+inflection in the test venv. It uses the checkout's nlohmann JSON wrap and
+builds the nghttp2 library from its Meson wrap when the private
+prefix lacks a compatible library. These steps require access to the configured
+package and source mirrors on the first run. SDK native pkgconf and CMake are
+selected from the current machine's recipe when available; `BMCWEB_NATIVE_BIN`
+overrides their directory.
 
 ```bash
 bmcweb_test cm14ep3r registries_test 'DbusEventMapping.*'
