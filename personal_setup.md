@@ -58,13 +58,7 @@ Reload with `source ~/.zshrc`.
 
 ### Linux / Windows Bash — `~/.bashrc`
 
-On the company Linux host, keep the existing Bash prompt configuration that uses `__git_ps1`. Add the helpers below to `~/.bashrc`. The same block works in WSL and Git Bash.
-
-If you previously copied the custom prompt, replace the `PS1=...` line that calls `parse_git_branch` with the company prompt below. This is the assignment from the original terminal, written with single quotes for pasting into `~/.bashrc`. Keep the existing Git shell setup that loads `__git_ps1`.
-
-```bash
-PS1='\[\033[01;32m\]\u@\h\[\033[00m\]:\[\033[01;34m\]\w\[\033[01;33m\]$(__git_ps1)\[\033[00m\]\$ '
-```
+Copy the following block into the personal settings section of `~/.bashrc`. Keep any other company or personal settings in that file. This block includes the company Git branch prompt and the OpenBMC helpers.
 
 ```bash
 # ── Personal settings ────────────────────────────────────────────────────────
@@ -74,6 +68,19 @@ BMC_SCRIPTS_DIR="$HOME/Desktop/scripts"
 
 if [[ $- == *i* ]]; then
     bind 'set enable-bracketed-paste on'
+    if ! declare -F __git_ps1 >/dev/null; then
+        for git_prompt_file in /usr/lib/git-core/git-sh-prompt /usr/share/git/completion/git-prompt.sh /etc/bash_completion.d/git-prompt; do
+            if [[ -r "$git_prompt_file" ]]; then
+                source "$git_prompt_file"
+                if declare -F __git_ps1 >/dev/null; then break; fi
+            fi
+        done
+        unset git_prompt_file
+    fi
+    if declare -F __git_ps1 >/dev/null; then
+        shopt -s promptvars
+        PS1='\[\033[01;32m\]\u@\h\[\033[00m\]:\[\033[01;34m\]\w\[\033[01;33m\]$(__git_ps1)\[\033[00m\]\$ '
+    fi
 fi
 
 # ── File and Git helpers ─────────────────────────────────────────────────────
@@ -118,6 +125,8 @@ patch_check() {
 
     git apply --check --verbose -- "$1"
 }
+
+alias bmcweb_f5='python3 ~/Desktop/scripts/setup_vscode.py --bmcweb-debug'
 
 # Load the bmcweb host-test helpers from the personal scripts directory.
 source "${BMCWEB_TEST_SCRIPT:-$BMC_SCRIPTS_DIR/bmcweb_tests.sh}"
@@ -270,13 +279,7 @@ with `--bmcweb-debug --test-target <executable>`. Terminal debugging with
 
 #### Bash shortcut and additional test files
 
-For scripts copied to `~/Desktop/scripts`, add this alias to `~/.bashrc` once:
-
-```bash
-alias bmcweb_f5='python3 ~/Desktop/scripts/setup_vscode.py --bmcweb-debug'
-```
-
-Load it with `source ~/.bashrc`. From the selected machine's
+The Bash block above defines `bmcweb_f5` for scripts in `~/Desktop/scripts`. From the selected machine's
 `workspace/sources` or `workspace/sources/bmcweb`, run:
 
 ```bash
