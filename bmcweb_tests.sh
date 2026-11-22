@@ -306,7 +306,7 @@ bmcweb_test() (
     if ! command -v "$PKG_CONFIG" >/dev/null; then
         export PKG_CONFIG="$deps/usr/bin/pkgconf"
     fi
-    local cpp_args="-I$inc -Wno-error=pedantic"
+    local cpp_args="-I$inc -Wno-error=pedantic -Wno-error=unused-parameter"
     local json_wrap="$src/subprojects/nlohmann_json.wrap" json_dir
     if [[ -f "$json_wrap" ]]; then
         json_dir=$(sed -nE 's/^directory[[:space:]]*=[[:space:]]*(.*[^[:space:]])[[:space:]]*$/\1/p' "$json_wrap")
