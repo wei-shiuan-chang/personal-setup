@@ -60,12 +60,10 @@ Reload with `source ~/.zshrc`.
 
 On the company Linux host, keep the existing Bash prompt configuration that uses `__git_ps1`. Add the helpers below to `~/.bashrc`. The same block works in WSL and Git Bash.
 
-If you copied an earlier version, remove its `parse_git_branch()` function and the `PS1=...` line that calls it. Keep your original `__git_ps1` setup. If you overwrote the original prompt, restore it from your backup or copy its `PS1` assignment from a terminal that still shows it (run `declare -p PS1` there). Open a new terminal in the bmcweb checkout. Run `git branch --show-current` and check that the same name appears in parentheses in the prompt, for example `(devtool)`.
-
-If Bash shows only the directory and `$`, check that the company Git prompt helper is loaded with `type -t __git_ps1` (expected output: `function`). If the helper is loaded and the original prompt assignment is unavailable, the following optional line at the end of `~/.bashrc` displays the branch using that helper. The single quotes let Bash refresh the branch name after each checkout.
+If you previously copied the custom prompt, replace the `PS1=...` line that calls `parse_git_branch` with the company prompt below. This is the assignment from the original terminal, written with single quotes for pasting into `~/.bashrc`. Keep the existing Git shell setup that loads `__git_ps1`.
 
 ```bash
-PS1='\[\e[1;32m\]\u@\h\[\e[0m\]:\[\e[1;34m\]\w\[\e[0m\]\[\e[1;33m\]$(__git_ps1 " (%s)")\[\e[0m\]\$ '
+PS1='\[\033[01;32m\]\u@\h\[\033[00m\]:\[\033[01;34m\]\w\[\033[01;33m\]$(__git_ps1)\[\033[00m\]\$ '
 ```
 
 ```bash
