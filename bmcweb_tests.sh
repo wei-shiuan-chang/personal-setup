@@ -115,7 +115,7 @@ bmcweb_test_env() {
         python3 -m venv "$venv" || return 1
     fi
 
-    "$venv/bin/python" -m pip install "meson${version}" requests inflection Mako MarkupSafe || return 1
+    "$venv/bin/python" -m pip install "meson${version}" requests inflection Mako MarkupSafe PyYAML || return 1
     "$venv/bin/meson" --version
 }
 
@@ -242,7 +242,7 @@ bmcweb_test() (
     fi
 
     if [[ ! -x "$venv/bin/meson" ]] ||
-       ! "$venv/bin/python" -c 'import requests, inflection, mako, markupsafe' 2>/dev/null; then
+       ! "$venv/bin/python" -c 'import requests, inflection, mako, markupsafe, yaml' 2>/dev/null; then
         bmcweb_test_env || return 1
     fi
 
