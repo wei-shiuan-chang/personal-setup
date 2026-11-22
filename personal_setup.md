@@ -79,7 +79,9 @@ if [[ $- == *i* ]]; then
     fi
     if declare -F __git_ps1 >/dev/null; then
         shopt -s promptvars
-        PS1='\[\033[01;32m\]\u@\h\[\033[00m\]:\[\033[01;34m\]\w\[\033[01;33m\]$(__git_ps1)\[\033[00m\]\$ '
+        # Keep the parentheses in the terminal's default color.
+        git_branch_format=$' (\001\e[01;33m\002%s\001\e[0m\002)'
+        PS1='\[\033[01;32m\]\u@\h\[\033[00m\]:\[\033[01;34m\]\w\[\033[00m\]$(__git_ps1 "$git_branch_format")\$ '
     fi
 fi
 
