@@ -275,6 +275,14 @@ bmcweb_f5
 bmcweb_f5 --test-target event_log_test
 ```
 
+In an interactive terminal, the first command lists the current machine's
+registered bmcweb test executables by number. Enter a number to add that
+target to the F5 dropdown, **Enter** or **0** for the standard whole-suite
+configuration, or **q** to leave the workspace file untouched. The picker
+refreshes the Meson test list after syncing local changes. On a fresh
+machine, the first invocation prepares the host-test environment.
+An explicit target, a dry run, or noninteractive use skips the prompt.
+
 The second command adds build-and-debug and last-build F5 entries for
 `event_log_test` alongside the existing entries. Use the test executable
 name from your checkout. For example, when `test/meson.build` creates each

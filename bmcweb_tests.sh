@@ -340,12 +340,13 @@ _bmcweb_configure() {
 #        bmcweb_test [--setup] --all [MACHINE]
 # Omitted arguments are prompted for. An empty filter runs the whole executable.
 bmcweb_test() (
-    local setup=false vscode_build=false all=false
+    local setup=false vscode_build=false all=false list_targets=false
     local -a debugger=()
     while (( $# )); do
         case "$1" in
             --setup) setup=true ;;
             --all) all=true ;;
+            --vscode-list) all=true; list_targets=true ;;
             --gdb) debugger=(gdb --args) ;;
             --vscode-build) vscode_build=true ;;
             --fast) ;; # Legacy incremental invocation.
@@ -423,7 +424,7 @@ bmcweb_test() (
     else
         # An interrupted setup must not leave the previous build marked ready.
         : > "$state" || return 1
-        _bmcweb_configure || return 1
+        _bmcweb_configure >&2 || return 1
         local key
         for key in CC CXX CMAKE PKG_CONFIG PKG_CONFIG_PATH PKG_CONFIG_LIBDIR PKG_CONFIG_SYSROOT_DIR LD_LIBRARY_PATH; do
             if [[ -v "$key" ]]; then
@@ -434,6 +435,12 @@ bmcweb_test() (
             mv -- "$state.tmp" "$state" || return 1
     fi
 
+    if "$list_targets"; then
+        env "${env_args[@]}" ninja -C "$build" build.ninja >&2 || return 1
+        printf '%s\0' "$build"
+        cat "$build/meson-info/intro-tests.json"
+        return
+    fi
     if "$all"; then
         env "${env_args[@]}" meson test -C "$build" --suite bmcweb --print-errorlogs
         return

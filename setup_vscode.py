@@ -913,6 +913,56 @@ def configure_workspace(
             )
 
 
+def bmcweb_runner() -> Path:
+    runner = Path(os.environ.get("BMCWEB_TEST_SCRIPT") or
+                  Path(__file__).with_name("bmcweb_tests.sh")).expanduser().resolve()
+    if not runner.is_file():
+        raise SetupError(f"Cannot find the bmcweb host-test runner: {runner}")
+    return runner
+
+
+def choose_bmcweb_target(sources: Path) -> str:
+    machine_build = sources.parents[1]
+    env = {**os.environ, "OPENBMC_ROOT": str(machine_build.parent.parent)}
+    try:
+        result = subprocess.run(
+            ["bash", "-c", 'source "$1" && bmcweb_test --vscode-list "$2"',
+             "bmcweb-vscode", str(bmcweb_runner()), machine_build.name],
+            env=env, stdout=subprocess.PIPE, text=True, check=True,
+        )
+        build_path, metadata = result.stdout.split("\0", 1)
+        build = Path(build_path)
+        tests = json.loads(metadata)
+    except (OSError, subprocess.CalledProcessError, ValueError) as error:
+        raise SetupError(f"Could not list tests for {machine_build.name}: {error}") from error
+
+    # The host runner builds test/<executable>. Meson test names can be aliases.
+    targets = set()
+    for test in tests:
+        if not any(s.split(":", 1)[0] == "bmcweb" for s in test["suite"]):
+            continue
+        executable = build / test["cmd"][0]
+        if executable.parent == build / "test":
+            targets.add(executable.name)
+
+    choices = ["Run all bmcweb host tests", *sorted(targets)]
+    print(f"Host tests for {machine_build.name}:")
+    for number, choice in enumerate(choices):
+        print(f"  {number:3}  {choice}")
+    while True:
+        try:
+            answer = input("Select a number [0 = all, q = cancel]: ").strip()
+        except (KeyboardInterrupt, EOFError):
+            raise SetupError("Selection cancelled.") from None
+        if answer.lower() == "q":
+            raise SetupError("Selection cancelled.")
+        if not answer or answer == "0":
+            return "registries_test"  # Standard workspace with the suite entry first.
+        if answer in map(str, range(1, len(choices))):
+            return choices[int(answer)]
+        print("Enter one of the listed numbers.")
+
+
 def add_bmcweb_debug(
     config: dict[str, Any], sources: Path, target: str
 ) -> None:
@@ -921,10 +971,7 @@ def add_bmcweb_debug(
     checkout = sources / "bmcweb"
     work = machine_build / "bmcweb-host-tests"
     launch_dir = work / "vscode" / target
-    runner = Path(os.environ.get("BMCWEB_TEST_SCRIPT") or
-                  Path(__file__).with_name("bmcweb_tests.sh")).expanduser().resolve()
-    if not runner.is_file():
-        raise SetupError(f"Cannot find the bmcweb host-test runner: {runner}")
+    runner = bmcweb_runner()
     label = f"Build bmcweb host test ({target})"
     task = {
         "label": label,
@@ -1086,11 +1133,11 @@ def main() -> int:
         help="print the merged settings without writing a file",
     )
     parser.add_argument("--bmcweb-debug", action="store_true",
-                        help="configure workspace-level F5 debugging only")
-    parser.add_argument("--test-target", default="registries_test",
+                        help="configure workspace-level F5 debugging and pick a test target in a terminal")
+    parser.add_argument("--test-target",
                         help="individual executable for breakpoint debugging (the first F5 entry runs all bmcweb tests)")
     args = parser.parse_args()
-    if not re.fullmatch(r"[A-Za-z0-9_][A-Za-z0-9_.-]*", args.test_target):
+    if args.test_target and not re.fullmatch(r"[A-Za-z0-9_][A-Za-z0-9_.-]*", args.test_target):
         parser.error("--test-target must be a test executable name")
 
     try:
@@ -1101,6 +1148,12 @@ def main() -> int:
         )
         if args.bmcweb_debug and selected_workspace.resolve().name == "bmcweb":
             selected_workspace = selected_workspace.resolve().parent
+        target = args.test_target or "registries_test"
+        if args.bmcweb_debug and not args.test_target and not args.dry_run and sys.stdin.isatty():
+            sources = selected_workspace.resolve()
+            if not (sources / "bmcweb/meson.build").is_file():
+                raise SetupError(f"Missing bmcweb checkout under {sources}")
+            target = choose_bmcweb_target(sources)
         if args.bmcweb_debug or args.multi_root or is_sources_directory:
             if args.compile_commands is not None:
                 raise SetupError(
@@ -1108,14 +1161,14 @@ def main() -> int:
                     "each recipe discovers its own compilation database."
                 )
             configure_multi_root(selected_workspace, args.dry_run, debug_only=args.bmcweb_debug,
-                                 test_target=args.test_target)
+                                 test_target=target)
         else:
             workspace = discover_workspace(args.workspace)
             configure_workspace(workspace, args.compile_commands, args.dry_run)
             if (workspace.name == "bmcweb" and workspace.parent.name == "sources"
                     and workspace.parent.parent.name == "workspace"):
                 configure_multi_root(workspace.parent, args.dry_run, debug_only=True,
-                                     test_target=args.test_target)
+                                     test_target=target)
     except SetupError as error:
         print(f"Error: {error}", file=sys.stderr)
         return 1
