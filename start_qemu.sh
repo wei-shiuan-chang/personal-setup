@@ -56,11 +56,53 @@ yocto() (
     source ./setup "$machine" "$build" >&2 || exit 1
     "$@"
 )
+run_yocto_qemu() (
+    local config=$1 latest_image=${2:-} run_config
+    # Keep relative image and sysroot paths valid for runqemu.
+    run_config=$(mktemp "${config%.qemuboot.conf}-runtime-XXXXXX.qemuboot.conf")
+    trap 'rm -f -- "$run_config"' EXIT
+    python3 - "$config" "$run_config" "$latest_image" <<'PYCONFIG'
+import configparser
+import os
+import re
+import sys
+from pathlib import Path
+
+source, output, latest_image = sys.argv[1:]
+config = configparser.ConfigParser()
+with open(source) as stream:
+    config.read_file(stream)
+bsp = config["config_bsp"]
+if latest_image and bsp.get("image_name"):
+    image = Path(latest_image).resolve(strict=True)
+    name = image.name.removesuffix(".static.mtd")
+    if name != bsp["image_name"]:
+        print(f"Refreshing qemuboot image name: {bsp['image_name']} -> {name}")
+        bsp["image_name"] = name
+
+options = bsp.get("qb_slirp_opt") or os.getenv("QB_SLIRP_OPT")
+if not options:
+    options = ("-netdev user,id=net0,hostfwd=tcp:127.0.0.1:2222-:22,"
+               f"hostfwd=tcp:127.0.0.1:2323-:23,tftp={Path(source).parent}")
+forward = "hostfwd=tcp:127.0.0.1:8443-:443"
+if forward not in re.split(r"[,\s]+", options):
+    if re.search(r"hostfwd=tcp:[^,\s]*:8443-", options):
+        sys.exit("Port 8443 already has a different TCP forwarding rule in QB_SLIRP_OPT")
+    options, count = re.subn(r"(-netdev\s+user|-net\s+user|-nic\s+user)(?=[,\s]|$)",
+                             r"\1," + forward, options, count=1)
+    if not count:
+        sys.exit("Cannot locate the user network in QB_SLIRP_OPT")
+bsp["qb_slirp_opt"] = options.replace("%", "%%")
+with open(output, "w") as stream:
+    config.write(stream)
+PYCONFIG
+    yocto runqemu "$run_config" nographic slirp
+)
 raw_options="$native$qemu$board$bios_dir$rom$flash$image$nic"
 if [[ -n $config ]]; then
     [[ -z $raw_options ]] || die '--config and raw-launch options cannot be combined'
     config=$(realpath -e -- "$config") || die 'QEMU configuration not found'
-    yocto runqemu "$config" nographic slirp
+    run_yocto_qemu "$config"
     exit
 fi
 
@@ -71,19 +113,24 @@ tmp=$(recipe_var TMPDIR)
 [[ -n $deploy && -n $tmp ]] || die 'Missing DEPLOY_DIR_IMAGE or TMPDIR'
 link=$(recipe_var IMAGE_LINK_NAME)
 link=${link:-obmc-phosphor-image-$machine}
+latest_image="$deploy/$link.static.mtd"
 
 if [[ -z $raw_options ]]; then
     for config in "$deploy/$link.qemuboot.conf" "$deploy/$link.rootfs.qemuboot.conf"; do
         if [[ -r $config ]]; then
             printf 'Using Yocto QEMU configuration: %s\n' "$config"
-            yocto runqemu "$config" nographic slirp
+            if [[ -s $latest_image && -r $latest_image ]]; then
+                run_yocto_qemu "$config" "$latest_image"
+            else
+                run_yocto_qemu "$config"
+            fi
             exit
         fi
     done
 fi
 
 native=${native:-$(recipe_var RECIPE_SYSROOT_NATIVE)}
-image=${image:-"$deploy/$link.static.mtd"}
+image=${image:-$latest_image}
 if [[ ! -s $image ]]; then
     printf 'Flash image not found: %s\n' "$image" >&2
     ask image 'Full path to raw MTD image: '
@@ -99,12 +146,22 @@ if [[ $machine == nvidia-vru ]]; then
 fi
 
 if [[ -z $qemu ]]; then
-    bins=()
-    for bin in "$native"/usr/bin/qemu-system-{arm,aarch64}; do
-        if [[ -x $bin ]]; then bins+=("$bin"); fi
-    done
-    if ((${#bins[@]} == 1)); then qemu=${bins[0]}; fi
+    qemu=$(recipe_var QB_SYSTEM_NAME)
 fi
+qemu_roots=("$native" "$tmp"/work/*/qemu-helper-native/*/recipe-sysroot-native)
+qemu_names=(qemu-system-arm qemu-system-aarch64)
+if [[ -n $qemu ]]; then qemu_names=("$qemu"); fi
+for sysroot in "${qemu_roots[@]}"; do
+    [[ $qemu != */* && -n $sysroot && -d $sysroot/usr/bin ]] || continue
+    for name in "${qemu_names[@]}"; do
+        bin="$sysroot/usr/bin/$name"
+        if [[ -x $bin && -f $bin ]]; then
+            qemu=$bin
+            native=$sysroot
+            break 2
+        fi
+    done
+done
 [[ -n $qemu ]] || ask qemu 'QEMU executable (name or full path): '
 if [[ $qemu != */* && -x $native/usr/bin/$qemu ]]; then qemu="$native/usr/bin/$qemu"; fi
 qemu=$(command -v -- "$qemu") || die 'QEMU executable not found'
