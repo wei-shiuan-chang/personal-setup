@@ -2,9 +2,9 @@
 
 ## Personal shell setup in one paste
 
-Copy the whole block for your shell into the indicated startup file. If you already have the prompt or helper there, replace those definitions with the block. Open a new terminal to load it.
+Copy the whole block for your shell into the indicated startup file. If you previously installed these helpers, update their definitions in place. Open a new terminal to load it.
 
-Run `tools_help` whenever you need a reminder of the available commands. The prompt shows your current Git branch. Run `check_python path/to/file.py` to check Python syntax without running the file.
+Run `tools_help` whenever you need a reminder of the available commands. Run `check_python path/to/file.py` to check Python syntax without running the file.
 
 ### macOS — `~/.zshrc`
 
@@ -58,7 +58,9 @@ Reload with `source ~/.zshrc`.
 
 ### Linux / Windows Bash — `~/.bashrc`
 
-For Bash on Linux, WSL, or Git Bash, add the following at the end of `~/.bashrc`, after any existing `PS1` assignment:
+On the company Linux host, keep the existing Bash prompt configuration that uses `__git_ps1`. Add the helpers below to `~/.bashrc`. The same block works in WSL and Git Bash.
+
+If you copied an earlier version, remove its `parse_git_branch()` function and the `PS1=...` line that calls it. Keep your original `__git_ps1` setup. If you overwrote the original prompt, restore it from your backup or copy its `PS1` assignment from a terminal that still shows it (run `declare -p PS1` there). Open a new terminal to verify the result.
 
 ```bash
 # ── Personal settings ────────────────────────────────────────────────────────
@@ -66,18 +68,8 @@ For Bash on Linux, WSL, or Git Bash, add the following at the end of `~/.bashrc`
 OPENBMC_ROOT="${OPENBMC_ROOT:-$HOME/Projects/openbmc_aspeed_sdk_11.03/openbmc-11.03}"
 BMC_SCRIPTS_DIR="$HOME/Desktop/scripts"
 
-# ── Interactive prompt ───────────────────────────────────────────────────────
-
-parse_git_branch() {
-    local branch
-    branch=$(git symbolic-ref --quiet --short HEAD 2>/dev/null) || return 0
-    printf '(%s) ' "$branch"
-}
-
 if [[ $- == *i* ]]; then
     bind 'set enable-bracketed-paste on'
-    shopt -s promptvars
-    PS1='\[\e[32m\]\u@\h\[\e[0m\] \[\e[34m\]\w\[\e[0m\] \[\e[36m\]$(parse_git_branch)\[\e[0m\]\$ '
 fi
 
 # ── File and Git helpers ─────────────────────────────────────────────────────
@@ -164,8 +156,6 @@ HELP
 ```
 
 Reload with `source ~/.bashrc`. On Windows, use this in WSL or Git Bash; PowerShell uses a different configuration.
-
-Both prompts show `user@host path (branch)` inside a Git repository and omit the branch outside one. The Bash version also omits it when HEAD is detached.
 
 ### Run bmcweb host tests
 
