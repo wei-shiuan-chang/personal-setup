@@ -336,12 +336,15 @@ _bmcweb_configure() {
         -Dredfish-dbus-log=enabled || return 1
 }
 
-# Usage: bmcweb_test [--fast] [MACHINE [TEST_EXECUTABLE [GTEST_FILTER]]]
+# Usage: bmcweb_test [--setup] [MACHINE [TEST_EXECUTABLE [GTEST_FILTER]]]
 # Omitted arguments are prompted for. An empty filter runs the whole executable.
 bmcweb_test() (
-    local fast=false
-    if [[ ${1:-} == --fast ]]; then
-        fast=true
+    local setup=false
+    if [[ ${1:-} == --setup ]]; then
+        setup=true
+        shift
+    elif [[ ${1:-} == --fast ]]; then
+        # Compatibility with the previous incremental invocation.
         shift
     fi
     local machine="${1:-}"
@@ -350,7 +353,7 @@ bmcweb_test() (
     local venv="${BMCWEB_TEST_VENV:-$HOME/.venvs/bmcweb-host-tests}"
 
     if (( $# > 3 )); then
-        echo 'Usage: bmcweb_test [--fast] [MACHINE [TEST_EXECUTABLE [GTEST_FILTER]]]' >&2
+        echo 'Usage: bmcweb_test [--setup] [MACHINE [TEST_EXECUTABLE [GTEST_FILTER]]]' >&2
         return 2
     fi
     if [[ -z "$machine" ]]; then
@@ -382,13 +385,13 @@ bmcweb_test() (
     flock 8 || return 1
     local state="$work/fast-build-v1"
     local -a saved=() env_args=()
-    if "$fast"; then
+    if ! "$setup"; then
         if [[ -s "$state" ]]; then
             mapfile -d '' -t saved < "$state" || return 1
         fi
         if (( ${#saved[@]} < 2 )) || [[ ! -f "${saved[0]}/build.ninja" ||
               ! -f "$work/source/meson.build" ]]; then
-            echo "Run bmcweb_test without --fast once for $machine to prepare its build." >&2
+            printf 'Prepare this machine first: bmcweb_test --setup %q %q %q\n' "$machine" "$target" "${filter:-*}" >&2
             return 1
         fi
         build=${saved[0]}
