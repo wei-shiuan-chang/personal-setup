@@ -27,6 +27,7 @@ Usage: start_qemu.sh [MACHINE | --machine NAME] [options]
 
 An image-matched qemuboot configuration takes precedence over board defaults.
 Explicit raw-launch options select the MTD launcher instead.
+For runqemu, QEMU_NETWORK_NIC selects the forwarded NIC (1-4, cm14ep3r defaults to 3).
 EOF
             exit 0 ;;
         --*)
@@ -58,17 +59,20 @@ yocto() (
 )
 run_yocto_qemu() (
     local config=$1 latest_image=${2:-} run_config
+    local nic_index=${QEMU_NETWORK_NIC:-${QEMU_NIC:-}}
+    if [[ -z $nic_index && $machine == cm14ep3r ]]; then nic_index=3; fi
+    [[ -z $nic_index || $nic_index =~ ^[1-4]$ ]] || die 'QEMU_NETWORK_NIC must be between 1 and 4'
     # Keep relative image and sysroot paths valid for runqemu.
     run_config=$(mktemp "${config%.qemuboot.conf}-runtime-XXXXXX.qemuboot.conf")
     trap 'rm -f -- "$run_config"' EXIT
-    python3 - "$config" "$run_config" "$latest_image" <<'PYCONFIG'
+    python3 - "$config" "$run_config" "$latest_image" "$nic_index" <<'PYCONFIG'
 import configparser
 import os
 import re
 import sys
 from pathlib import Path
 
-source, output, latest_image = sys.argv[1:]
+source, output, latest_image, nic_index = sys.argv[1:]
 config = configparser.ConfigParser()
 with open(source) as stream:
     config.read_file(stream)
@@ -92,6 +96,24 @@ if forward not in re.split(r"[,\s]+", options):
                              r"\1," + forward, options, count=1)
     if not count:
         sys.exit("Cannot locate the user network in QB_SLIRP_OPT")
+
+if nic_index and int(nic_index) > 1:
+    # Place unforwarded controllers first. Keep the configured user network
+    # and its NIC together as the selected controller, including its MAC/model.
+    target = int(nic_index) - 1
+    device = bsp.get("qb_network_device") or "-net nic,netdev=net0"
+    backend = re.fullmatch(r"-netdev\s+user(?:,[^\s]+)?", options.strip())
+    backend_id = re.search(r",id=([^,\s]+)", options)
+    if not backend or not backend_id:
+        sys.exit("NIC selection requires a single -netdev user backend with an id in QB_SLIRP_OPT")
+    old_id = re.escape(backend_id[1])
+    device, matches = re.subn(rf"(?<=,netdev=){old_id}(?=,|$)", f"net{target}", device.strip())
+    if matches != 1 or not re.fullmatch(r"-(?:net|device)\s+[^\s]+", device):
+        sys.exit("NIC selection requires a single QB_NETWORK_DEVICE attached to the user backend")
+    options = re.sub(rf"(?<=,id=){old_id}(?=,|$)", f"net{target}", options.strip())
+    bsp["qb_network_device"] = " ".join(
+        [f"-net nic,netdev=net{i}" for i in range(target)] + [device.replace("%", "%%")])
+    options = " ".join([f"-netdev user,id=net{i}" for i in range(target)] + [options])
 bsp["qb_slirp_opt"] = options.replace("%", "%%")
 with open(output, "w") as stream:
     config.write(stream)
