@@ -369,9 +369,25 @@ PYTHON
     if "$allow_all"; then
         echo '    0  Run all bmcweb host tests (default)' >&2
     fi
+    local width=${COLUMNS:-} cell used=0 label
+    if [[ ! $width =~ ^[1-9][0-9]*$ ]]; then
+        width=$(tput cols 2>/dev/null) || width=80
+    fi
     for i in "${!targets[@]}"; do
-        printf '  %3d  %s\n' "$((i + 1))" "${targets[i]}" >&2
+        printf -v label '%3d  %s' "$((i + 1))" "${targets[i]}"
+        cell=${#label}
+        if (( used && used + 3 + cell > width )); then
+            printf '\n' >&2
+            used=0
+        fi
+        if (( used )); then
+            printf '   ' >&2
+            used=$((used + 3))
+        fi
+        printf '%s' "$label" >&2
+        used=$((used + cell))
     done
+    if (( used )); then printf '\n' >&2; fi
     while true; do
         read -r -p 'Select a number (q = cancel): ' answer || return 130
         if [[ "$answer" == [qQ] ]]; then return 130; fi

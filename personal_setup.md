@@ -158,12 +158,20 @@ patch_check PATCH                       Check whether a Git patch applies.
 
 bmcweb_test_env [VERSION_SPEC]          Set up Meson and requests.
 bmcweb_test [MACHINE [TARGET [FILTER]]] Incrementally build and run a host test.
+  bmcweb_test cm14ep3r                              Choose from all targets shown side by side.
+  bmcweb_test cm14ep3r event_log_test               Run all cases in event_log_test.
+  bmcweb_test cm14ep3r registries_test 'DbusEventMapping.*'   Run only matching cases.
 bmcweb_test --setup [MACHINE [TARGET [FILTER]]] Prepare the machine build and run the test.
 bmcweb_test --gdb [MACHINE [TARGET [FILTER]]]   Open the selected test in GDB.
                                         Omitted arguments are prompted for.
 BMCWEB_GCC_ROOT=/path bmcweb_test --setup ...   Use a specific host GCC toolchain.
-VS Code F5: "Debug bmcweb host test (registries_test)" builds before debugging.
-            "Debug last build (registries_test)" reuses the existing executable.
+To debug a bmcweb host test in VS Code:
+  1. From workspace/sources, run bmcweb_f5 and choose a test executable by number.
+  2. Open its C++ test file and click beside a line number to set a breakpoint.
+  3. In Run and Debug, select "Debug bmcweb host test (<your target>)" and press F5.
+     Enter a Google Test filter, or accept * for all cases in that executable.
+  4. To rerun the same binary, choose "Debug last build (<your target>)".
+     After editing C++ code, use the build-and-debug entry again.
 
 ./validate-redfish.sh --help            Validate the service tree, one URI, or a subtree.
 ./generate-openapi.py [--watch]         Generate openapi.yaml from bmcweb routes.
@@ -304,12 +312,12 @@ bmcweb_test --all cm14ep3r
 
 For C++ breakpoints, use the individual executable configuration.
 Open the test in the **bmcweb** folder, click the gutter at an executable
-line, select **Debug bmcweb host test (registries_test)** in Run and Debug,
+line, select **Debug bmcweb host test (<target>)** for the executable you chose in Run and Debug,
 and press **F5**. Enter a Google Test filter such as `DbusEventMapping.*`,
 or accept `*` to run the whole executable. The build task prepares a fresh
 machine on first use, syncs edits and builds with Ninja. VS Code then starts
 GDB with the host runtime environment and maps the staged sources back to
-the checkout. After the first successful F5 build, select **Debug last build (registries_test)**
+the checkout. After the first successful F5 build, select **Debug last build (<target>)**
 to rerun the executable with VS Code breakpoints and a new filter.
 It skips source sync and compilation. After editing code, select the original
 build-and-debug configuration to refresh the binary and its line information. After SDK or dependency
@@ -331,7 +339,7 @@ bmcweb_f5 --test-target event_log_test
 ```
 
 In an interactive terminal, the first command lists the current machine's
-registered bmcweb test executables by number. Enter a number to add that
+registered bmcweb test executables side by side, wrapping to the terminal width. Enter a number to add that
 target to the F5 dropdown, **Enter** or **0** for the standard whole-suite
 configuration, or **q** to leave the workspace file untouched. The picker
 refreshes the Meson test list after syncing local changes. On a fresh
