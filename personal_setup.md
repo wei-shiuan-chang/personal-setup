@@ -9,6 +9,11 @@ Run `tools_help` whenever you need a reminder of the available commands. Run `ch
 ### macOS — `~/.zshrc`
 
 ```zsh
+BMC_SCRIPTS_DIR="$HOME/Desktop/scripts"
+
+validate_redfish() { bash "$BMC_SCRIPTS_DIR/validate-redfish.sh" "$@"; }
+generate_openapi() { python3 "$BMC_SCRIPTS_DIR/generate-openapi.py" "$@"; }
+
 # Load Zsh's built-in version control helper.
 autoload -Uz vcs_info add-zsh-hook
 # Refresh Git information before each prompt, including after branch changes.
@@ -50,8 +55,8 @@ tools_help() {
         'check_json FILE     Check JSON syntax.' \
         'git_where           Show directory, repository, branch and changes.' \
         'patch_check PATCH   Check patch applicability without applying it.' \
-        './validate-redfish.sh --help   Validate all Redfish resources or one URI.' \
-        './generate-openapi.py --watch  Refresh openapi.yaml after route edits.' \
+        'validate_redfish --help   Validate all Redfish resources or one URI.' \
+        'generate_openapi --watch  Refresh openapi.yaml after route edits.' \
         'tools_help          List personal shell commands.'
 }
 ```
@@ -67,6 +72,9 @@ Copy the following block into the personal settings section of `~/.bashrc`. Keep
 
 OPENBMC_ROOT="${OPENBMC_ROOT:-$HOME/Projects/openbmc_aspeed_sdk_11.03/openbmc-11.03}"
 BMC_SCRIPTS_DIR="$HOME/Desktop/scripts"
+
+validate_redfish() { bash "$BMC_SCRIPTS_DIR/validate-redfish.sh" "$@"; }
+generate_openapi() { python3 "$BMC_SCRIPTS_DIR/generate-openapi.py" "$@"; }
 
 if [[ $- == *i* ]]; then
     bind 'set enable-bracketed-paste on'
@@ -130,7 +138,7 @@ patch_check() {
     git apply --check --verbose -- "$1"
 }
 
-alias bmcweb_f5='python3 ~/Desktop/scripts/setup_vscode.py --bmcweb-debug'
+alias bmcweb_f5='python3 "$BMC_SCRIPTS_DIR/setup_vscode.py" --bmcweb-debug'
 
 # Load the bmcweb host-test helpers from the personal scripts directory.
 source "${BMCWEB_TEST_SCRIPT:-$BMC_SCRIPTS_DIR/bmcweb_tests.sh}"
@@ -165,6 +173,8 @@ bmcweb_test --setup [MACHINE [TARGET [FILTER]]] Prepare the machine build and ru
 bmcweb_test --gdb [MACHINE [TARGET [FILTER]]]   Open the selected test in GDB.
                                         Omitted arguments are prompted for.
 BMCWEB_GCC_ROOT=/path bmcweb_test --setup ...   Use a specific host GCC toolchain.
+bmcweb_f5 [--test-target TARGET]        Pick a host test or add TARGET to the VS Code F5 menu.
+
 To debug a bmcweb host test in VS Code:
   1. From workspace/sources, run bmcweb_f5 and choose a test executable by number.
   2. Open its C++ test file and click beside a line number to set a breakpoint.
@@ -173,9 +183,9 @@ To debug a bmcweb host test in VS Code:
   4. To rerun the same binary, choose "Debug last build (<your target>)".
      After editing C++ code, use the build-and-debug entry again.
 
-./validate-redfish.sh --help            Validate the service tree, one URI, or a subtree.
-./generate-openapi.py [--watch]         Generate openapi.yaml from bmcweb routes.
-                                        Run both scripts from workspace/sources.
+validate_redfish --help            Validate the service tree, one URI, or a subtree.
+generate_openapi [--watch]         Generate openapi.yaml from bmcweb routes.
+                                        Use workspace/sources as the working directory for the default paths.
 
 bmc_qemu                                Prompt for an OpenBMC machine.
 bmc_qemu MACHINE [OPTIONS]              Start QEMU for that machine.
@@ -188,7 +198,7 @@ Reload with `source ~/.bashrc`. On Windows, use this in WSL or Git Bash; PowerSh
 
 ### Validate Redfish and inspect route changes
 
-Run these commands on the development machine from `workspace/sources`. For
+Store both scripts in `$BMC_SCRIPTS_DIR` with the other helpers. Run these examples from the machine’s `workspace/sources` so the relative paths `bmcweb/`, `openapi.yaml`, `config.ini`, and `logs/` resolve there. For
 validation, create a private `config.ini` (mode 600) with the running BMC or
 QEMU HTTPS address and credentials. For example:
 
@@ -202,10 +212,10 @@ password = YOUR_PASSWORD
 ```
 
 ```bash
-./validate-redfish.sh --install
-./validate-redfish.sh --config config.ini
-./validate-redfish.sh --config config.ini --payload Single /redfish/v1/Systems/system/LogServices/EventLog
-./validate-redfish.sh --config config.ini --payload Tree /redfish/v1/Systems/system/LogServices/EventLog
+validate_redfish --install
+validate_redfish --config config.ini
+validate_redfish --config config.ini --payload Single /redfish/v1/Systems/system/LogServices/EventLog
+validate_redfish --config config.ini --payload Tree /redfish/v1/Systems/system/LogServices/EventLog
 ```
 
 The default run traverses the service root and writes reports under `./logs`.
@@ -213,8 +223,8 @@ The validator defaults to sampling up to 20 LogEntry members. Use
 `--collectionlimit LogEntry COUNT` to change that limit. Deploy your changed
 bmcweb build before validating its responses.
 
-For a source preview, run `./generate-openapi.py` once or
-`./generate-openapi.py --watch` to refresh `openapi.yaml` after saves.
+For a source preview, run `generate_openapi` once or
+`generate_openapi --watch` to refresh `openapi.yaml` after saves.
 The generator requires Python 3 and PyYAML. Use `--source PATH` for another
 bmcweb checkout and `-o FILE` to choose the output path. The YAML lists paths
 and methods from literal Redfish v1 route declarations, including conditional
