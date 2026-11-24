@@ -50,6 +50,8 @@ tools_help() {
         'check_json FILE     Check JSON syntax.' \
         'git_where           Show directory, repository, branch and changes.' \
         'patch_check PATCH   Check patch applicability without applying it.' \
+        './validate-redfish.sh --help   Validate all Redfish resources or one URI.' \
+        './generate-openapi.py --watch  Refresh openapi.yaml after route edits.' \
         'tools_help          List personal shell commands.'
 }
 ```
@@ -163,6 +165,10 @@ BMCWEB_GCC_ROOT=/path bmcweb_test --setup ...   Use a specific host GCC toolchai
 VS Code F5: "Debug bmcweb host test (registries_test)" builds before debugging.
             "Debug last build (registries_test)" reuses the existing executable.
 
+./validate-redfish.sh --help            Validate the service tree, one URI, or a subtree.
+./generate-openapi.py [--watch]         Generate openapi.yaml from bmcweb routes.
+                                        Run both scripts from workspace/sources.
+
 bmc_qemu                                Prompt for an OpenBMC machine.
 bmc_qemu MACHINE [OPTIONS]              Start QEMU for that machine.
 bmc_qemu --help                         Show all launcher options.
@@ -171,6 +177,41 @@ HELP
 ```
 
 Reload with `source ~/.bashrc`. On Windows, use this in WSL or Git Bash; PowerShell uses a different configuration.
+
+### Validate Redfish and inspect route changes
+
+Run these commands on the development machine from `workspace/sources`. For
+validation, create a private `config.ini` (mode 600) with the running BMC or
+QEMU HTTPS address and credentials. For example:
+
+```ini
+[Connection]
+rhost = https://localhost:2443
+[Authentication]
+authtype = Session
+user = YOUR_USER
+password = YOUR_PASSWORD
+```
+
+```bash
+./validate-redfish.sh --install
+./validate-redfish.sh --config config.ini
+./validate-redfish.sh --config config.ini --payload Single /redfish/v1/Systems/system/LogServices/EventLog
+./validate-redfish.sh --config config.ini --payload Tree /redfish/v1/Systems/system/LogServices/EventLog
+```
+
+The default run traverses the service root and writes reports under `./logs`.
+The validator defaults to sampling up to 20 LogEntry members. Use
+`--collectionlimit LogEntry COUNT` to change that limit. Deploy your changed
+bmcweb build before validating its responses.
+
+For a source preview, run `./generate-openapi.py` once or
+`./generate-openapi.py --watch` to refresh `openapi.yaml` after saves.
+The generator requires Python 3 and PyYAML. Use `--source PATH` for another
+bmcweb checkout and `-o FILE` to choose the output path. The YAML lists paths
+and methods from literal Redfish v1 route declarations, including conditional
+features. Handler response fields, runtime route availability and OEM routes
+registered dynamically are outside its scope.
 
 ### Run bmcweb host tests
 
