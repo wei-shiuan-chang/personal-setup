@@ -12,6 +12,8 @@ Run `tools_help` whenever you need a reminder of the available commands. Run `ch
 BMC_SCRIPTS_DIR="$HOME/Desktop/scripts"
 
 validate_redfish() { bash "$BMC_SCRIPTS_DIR/validate-redfish.sh" "$@"; }
+webui_preview() { python3 "$BMC_SCRIPTS_DIR/webui_preview.py" "$@"; }
+
 generate_openapi() { python3 "$BMC_SCRIPTS_DIR/generate-openapi.py" "$@"; }
 
 # Load Zsh's built-in version control helper.
@@ -57,6 +59,7 @@ tools_help() {
         'patch_check PATCH   Check patch applicability without applying it.' \
         'validate_redfish --help   Validate all Redfish resources or one URI.' \
         'generate_openapi --watch  Refresh openapi.yaml after route edits.' \
+        'webui_preview [WEBUI_DIR] [--entries FILE]   Preview Event Logs with hot reload.' \
         'tools_help          List personal shell commands.'
 }
 ```
@@ -74,6 +77,7 @@ OPENBMC_ROOT="${OPENBMC_ROOT:-$HOME/Projects/openbmc_aspeed_sdk_11.03/openbmc-11
 BMC_SCRIPTS_DIR="$HOME/Desktop/scripts"
 
 validate_redfish() { bash "$BMC_SCRIPTS_DIR/validate-redfish.sh" "$@"; }
+webui_preview() { python3 "$HOME/personal-setup/webui_preview.py" "$@"; }
 generate_openapi() { python3 "$BMC_SCRIPTS_DIR/generate-openapi.py" "$@"; }
 
 if [[ $- == *i* ]]; then
@@ -182,6 +186,20 @@ To debug a bmcweb host test in VS Code:
      Enter a Google Test filter, or accept * for all cases in that executable.
   4. To rerun the same binary, choose "Debug last build (<your target>)".
      After editing C++ code, use the build-and-debug entry again.
+
+webui_preview [WEBUI_DIR] [--entries FILE]  Preview Event Logs locally with Vite.
+webui_preview --sample > events.json       Create an editable Redfish collection.
+  From the webui-vue checkout, run webui_preview --entries events.json.
+  Use preview / preview to sign in, then open /#/logs/event-logs on the Vite URL.
+  Save Vue edits for hot reload. Refresh the page after editing events.json.
+  The preview serves read-only entries. Install dependencies with npm ci if needed.
+
+To create a test entry on a running test BMC, run this in its shell:
+  busctl call xyz.openbmc_project.Logging /xyz/openbmc_project/logging \
+    xyz.openbmc_project.Logging.Create Create 'ssa{ss}' \
+    "Preview fan speed low" xyz.openbmc_project.Logging.Entry.Level.Warning 0
+  The final 0 means no additional-data pairs. This creates a real log entry.
+  Inspect the returned path with busctl introspect xyz.openbmc_project.Logging PATH.
 
 validate_redfish --help            Validate the service tree, one URI, or a subtree.
 generate_openapi [--watch]         Generate openapi.yaml from bmcweb routes.
@@ -368,6 +386,34 @@ unit-test source list in `test/meson.build`. The next **Run all bmcweb host
 tests** includes the registered executable automatically. New Google Test
 cases added to an existing registered file run with that executable's
 `*` filter after rebuilding.
+
+### Preview webui-vue Event Logs without QEMU
+
+From the machine build's `workspace/sources` directory, select the checkout you edit.
+Use `ui=./webui-vue` for a devtool checkout. For the existing AST2600 Yocto build, use:
+
+```bash
+ui=../../tmp/work/all-openbmc-linux/webui-vue/1.0+git/sources/webui-vue-1.0+git
+python3 ~/personal-setup/webui_preview.py "$ui"
+```
+
+The launcher needs Python 3, Node.js, npm and the checkout's Vite dependencies.
+If Vite is missing in your devtool checkout, run `(cd "$ui" && npm ci)`.
+Open Vite's **Local** URL, sign in with `preview` / `preview`, then visit
+`/#/logs/event-logs` on the same host and port. Look for **Fan 1 speed below threshold**.
+Save a Vue component in that checkout to see it hot-reload. Press Ctrl+C to stop.
+
+To try your own data, create a fixture once at a new path, then launch with it:
+
+```bash
+python3 ~/personal-setup/webui_preview.py --sample > events.json
+python3 ~/personal-setup/webui_preview.py "$ui" --entries events.json
+```
+
+Change a member's `Message` or `Severity`, save the JSON, and refresh the browser.
+For an empty table use `{"Members": []}`. Reuse the launch command on later runs
+to preserve your edits. The preview reads the fixture locally. For a persistent
+D-Bus entry on a test BMC, use the `busctl` example in `tools_help`.
 
 ### Run OpenBMC in QEMU
 
