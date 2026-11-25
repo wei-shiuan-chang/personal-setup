@@ -187,9 +187,8 @@ To debug a bmcweb host test in VS Code:
   4. To rerun the same binary, choose "Debug last build (<your target>)".
      After editing C++ code, use the build-and-debug entry again.
 
-webui_preview [WEBUI_DIR] [--entries FILE]  Preview Event Logs locally with Vite.
-webui_preview --sample > events.json       Create an editable Redfish collection.
-  From the webui-vue checkout, run webui_preview --entries events.json.
+webui_preview                           Find webui-vue and start the local Event Logs preview.
+  Edit events.json in the launch directory and refresh the page to see your changes.
   Use preview / preview to sign in, then open /#/logs/event-logs on the Vite URL.
   Save Vue edits for hot reload. Refresh the page after editing events.json.
   The preview serves read-only entries. Install dependencies with npm ci if needed.
@@ -389,31 +388,19 @@ cases added to an existing registered file run with that executable's
 
 ### Preview webui-vue Event Logs without QEMU
 
-From the machine build's `workspace/sources` directory, select the checkout you edit.
-Use `ui=./webui-vue` for a devtool checkout. For the existing AST2600 Yocto build, use:
+From the machine build's `workspace/sources` directory or your webui-vue checkout, run:
 
 ```bash
-ui=../../tmp/work/all-openbmc-linux/webui-vue/1.0+git/sources/webui-vue-1.0+git
-python3 ~/personal-setup/webui_preview.py "$ui"
+webui_preview
 ```
 
-The launcher needs Python 3, Node.js, npm and the checkout's Vite dependencies.
-If Vite is missing in your devtool checkout, run `(cd "$ui" && npm ci)`.
-Open Vite's **Local** URL, sign in with `preview` / `preview`, then visit
-`/#/logs/event-logs` on the same host and port. Look for **Fan 1 speed below threshold**.
-Save a Vue component in that checkout to see it hot-reload. Press Ctrl+C to stop.
+The launcher prints the selected checkout and creates or reuses `events.json` in your
+current directory. From the workspace it prefers the devtool checkout, then looks in
+the machine's Yocto build. If Vite is missing, run `npm ci` in the selected checkout.
 
-To try your own data, create a fixture once at a new path, then launch with it:
-
-```bash
-python3 ~/personal-setup/webui_preview.py --sample > events.json
-python3 ~/personal-setup/webui_preview.py "$ui" --entries events.json
-```
-
-Change a member's `Message` or `Severity`, save the JSON, and refresh the browser.
-For an empty table use `{"Members": []}`. Reuse the launch command on later runs
-to preserve your edits. The preview reads the fixture locally. For a persistent
-D-Bus entry on a test BMC, use the `busctl` example in `tools_help`.
+Open Vite's Local URL, sign in with `preview` / `preview`, then visit `/#/logs/event-logs`.
+Edit a `Message` in the printed JSON file and refresh the browser. Vue edits hot-reload.
+Press Ctrl+C to stop. Use `webui_preview --help` for optional checkout and fixture paths.
 
 ### Run OpenBMC in QEMU
 

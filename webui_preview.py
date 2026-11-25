@@ -1,16 +1,12 @@
 """Preview webui-vue Event Logs locally with Vite and a mock Redfish service.
 
-Quick start from workspace/sources (Python 3, Node.js and npm required)
-  python3 ~/personal-setup/webui_preview.py ./webui-vue
+From workspace/sources or your webui-vue checkout, run:
+  webui_preview
 
-To edit the sample, create events.json once in your current directory
-  python3 ~/personal-setup/webui_preview.py --sample > events.json
-  python3 ~/personal-setup/webui_preview.py ./webui-vue --entries events.json
-
-Open the Local URL printed by Vite and sign in with preview / preview.
-Visit /#/logs/event-logs on that URL. Save a .vue file in the selected
-checkout to see it hot-reload. Edit a Message in events.json, save it,
-and refresh the browser to reload the entries. Press Ctrl+C to stop.
+The launcher finds webui-vue and creates or reuses events.json in the
+directory where you ran the command. Edit its Message and refresh the page.
+Sign in with preview / preview and open /#/logs/event-logs on the Vite URL.
+Save Vue edits for hot reload. Press Ctrl+C to stop.
 """
 import argparse
 import json
@@ -58,7 +54,7 @@ class MockRedfish(BaseHTTPRequestHandler):
         if path == ENTRIES:
             try:
                 fixture = self.server.fixture
-                data = json.loads(fixture.read_text()) if fixture else SAMPLE
+                data = json.loads(fixture.read_text())
                 self.reply(200, data)
             except (ValueError, OSError) as error:
                 self.reply(500, {"error": str(error)})
@@ -74,28 +70,59 @@ class MockRedfish(BaseHTTPRequestHandler):
         self.reply(200 if path in resources else 404, resources.get(path, {}))
 
 
+def find_checkout(start):
+    for directory in (start, *start.parents):
+        if (directory / "src/store/modules/Logs/EventLogStore.js").is_file():
+            return directory
+        if directory.name == "sources" and directory.parent.name == "workspace":
+            devtool = directory / "webui-vue"
+            if devtool.is_dir():
+                return devtool
+            work = directory.parent.parent / "tmp/work"
+            matches = sorted(path for path in work.glob("*/webui-vue/*/sources/webui-vue*")
+                             if (path / "vite.config.js").is_file())
+            if len(matches) == 1:
+                return matches[0]
+            if matches:
+                raise ValueError("Multiple checkouts found. Pass one of: " + ", ".join(map(str, matches)))
+    raise ValueError("Run from workspace/sources or pass the webui-vue checkout path.")
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("checkout", nargs="?", type=Path, default=Path.cwd(),
-                        help="webui-vue source directory (default: current directory). Run npm ci there if Vite is missing.")
-    parser.add_argument("--entries", type=Path, help="Redfish collection JSON (default: one built-in warning entry)")
+    parser.add_argument("checkout", nargs="?", type=Path,
+                        help="webui-vue source directory (default: autodetect). Run npm ci there if Vite is missing.")
+    parser.add_argument("--entries", type=Path, help="Redfish collection JSON (default: create or reuse ./events.json)")
     parser.add_argument("--sample", action="store_true", help="print an editable sample and exit")
     args = parser.parse_args()
     if args.sample:
         print(json.dumps(SAMPLE, indent=2))
         return 0
-    if not (args.checkout / "node_modules/.bin/vite").is_file():
-        parser.error("supply the webui-vue directory with npm dependencies installed")
+    try:
+        checkout = args.checkout or find_checkout(Path.cwd())
+    except ValueError as error:
+        parser.error(str(error))
+    if not (checkout / "node_modules/.bin/vite").is_file():
+        parser.error(f"Vite is missing in {checkout}. Install dependencies there with npm ci.")
     if args.entries and not args.entries.is_file():
         parser.error(f"fixture does not exist: {args.entries}")
+    fixture = args.entries or Path.cwd() / "events.json"
+    if args.entries is None:
+        try:
+            with fixture.open("x") as out:
+                print(json.dumps(SAMPLE, indent=2), file=out)
+        except FileExistsError:
+            if not fixture.is_file():
+                parser.error(f"Expected a JSON file at {fixture}")
+    print(f"Checkout: {checkout}\nMock events: {fixture.resolve()}", flush=True)
     with ThreadingHTTPServer(("127.0.0.1", 0), MockRedfish) as server:
-        server.fixture = args.entries
+        server.fixture = fixture
         Thread(target=server.serve_forever, daemon=True).start()
         env = dict(os.environ, BASE_URL=f"http://127.0.0.1:{server.server_port}")
         print("Open /#/logs/event-logs on the Vite URL. Sign in with preview / preview.", flush=True)
         try:
             return subprocess.call(["npm", "run", "serve", "--", "--host", "127.0.0.1"],
-                                   cwd=args.checkout, env=env)
+                                   cwd=checkout, env=env)
         except KeyboardInterrupt:
             return 130
 
