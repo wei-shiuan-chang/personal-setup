@@ -1,21 +1,35 @@
-"""Preview webui-vue Event Logs locally with Vite and a mock Redfish service.
+"""Preview webui-vue Event Logs locally with a mock Redfish service.
 
 From workspace/sources or your webui-vue checkout, run:
   webui_preview
 
 The launcher finds webui-vue and creates or reuses events.json in the
 directory where you ran the command. Edit its Message and refresh the page.
-Sign in with preview / preview and open /#/logs/event-logs on the Vite URL.
+Sign in with preview / preview and open /#/logs/event-logs on the dev server URL.
 Save Vue edits for hot reload. Press Ctrl+C to stop.
 """
 import argparse
 import json
 import os
+import shutil
 import subprocess
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from tempfile import TemporaryDirectory
 from threading import Thread
 from urllib.parse import urlsplit
+
+# Vue CLI loads this preview config after its environment and mode are set.
+VUE_PREVIEW_CONFIG = """\
+const original = require(process.env.WEBUI_PREVIEW_PROJECT_CONFIG);
+module.exports = {
+  ...original,
+  devServer: {
+    ...original.devServer,
+    proxy: { '/redfish': { target: process.env.BASE_URL, changeOrigin: true } }
+  }
+};
+"""
 
 ROOT = "/redfish/v1"
 SYSTEM = ROOT + "/Systems/system"
@@ -76,11 +90,11 @@ def find_checkout(start):
             return directory
         if directory.name == "sources" and directory.parent.name == "workspace":
             devtool = directory / "webui-vue"
-            if devtool.is_dir():
+            if (devtool / "package.json").is_file():
                 return devtool
             work = directory.parent.parent / "tmp/work"
             matches = sorted(path for path in work.glob("*/webui-vue/*/sources/webui-vue*")
-                             if (path / "vite.config.js").is_file())
+                             if (path / "package.json").is_file())
             if len(matches) == 1:
                 return matches[0]
             if matches:
@@ -88,10 +102,36 @@ def find_checkout(start):
     raise ValueError("Run from workspace/sources or pass the webui-vue checkout path.")
 
 
+def preview_environment(checkout):
+    package = json.loads((checkout / "package.json").read_text())
+    serve = package.get("scripts", {}).get("serve", "")
+    tool = next((name for name in serve.split() if name in ("vite", "vue-cli-service")), None)
+    if not tool:
+        raise ValueError(f"Unsupported package.json serve script: {serve!r}")
+    if not (checkout / "node_modules/.bin" / tool).is_file():
+        raise ValueError(f"{tool} is missing in {checkout}. Install the checkout's dependencies. "
+                         "For SDK builds, ensure local vendor archives exist before running npm ci, "
+                         "or restore node_modules from the matching Yocto build.")
+
+    env = os.environ.copy()
+    for directory in (checkout, *checkout.parents):
+        candidates = [directory / "recipe-sysroot-native/usr/bin"]
+        if directory.name == "workspace":
+            candidates.extend(sorted(directory.parent.glob(
+                "tmp/work/*/webui-vue/*/recipe-sysroot-native/usr/bin")))
+        for bin_dir in candidates:
+            if all(os.access(bin_dir / exe, os.X_OK) for exe in ("node", "npm")):
+                env["PATH"] = os.pathsep.join([str(bin_dir), *os.get_exec_path(env)])
+                return tool, env
+    if not all(shutil.which(exe) for exe in ("node", "npm")):
+        raise ValueError("Install Node.js and npm or prepare the Yocto webui-vue native sysroot.")
+    return tool, env
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("checkout", nargs="?", type=Path,
-                        help="webui-vue source directory (default: autodetect). Run npm ci there if Vite is missing.")
+                        help="webui-vue source directory (default: autodetect).")
     parser.add_argument("--entries", type=Path, help="Redfish collection JSON (default: create or reuse ./events.json)")
     parser.add_argument("--sample", action="store_true", help="print an editable sample and exit")
     args = parser.parse_args()
@@ -99,11 +139,10 @@ def main():
         print(json.dumps(SAMPLE, indent=2))
         return 0
     try:
-        checkout = args.checkout or find_checkout(Path.cwd())
-    except ValueError as error:
+        checkout = (args.checkout or find_checkout(Path.cwd())).resolve()
+        tool, env = preview_environment(checkout)
+    except (OSError, ValueError) as error:
         parser.error(str(error))
-    if not (checkout / "node_modules/.bin/vite").is_file():
-        parser.error(f"Vite is missing in {checkout}. Install dependencies there with npm ci.")
     if args.entries and not args.entries.is_file():
         parser.error(f"fixture does not exist: {args.entries}")
     fixture = args.entries or Path.cwd() / "events.json"
@@ -115,11 +154,23 @@ def main():
             if not fixture.is_file():
                 parser.error(f"Expected a JSON file at {fixture}")
     print(f"Checkout: {checkout}\nMock events: {fixture.resolve()}", flush=True)
-    with ThreadingHTTPServer(("127.0.0.1", 0), MockRedfish) as server:
+    with TemporaryDirectory() as config_dir, ThreadingHTTPServer(("127.0.0.1", 0), MockRedfish) as server:
         server.fixture = fixture
         Thread(target=server.serve_forever, daemon=True).start()
-        env = dict(os.environ, BASE_URL=f"http://127.0.0.1:{server.server_port}")
-        print("Open /#/logs/event-logs on the Vite URL. Sign in with preview / preview.", flush=True)
+        env["BASE_URL"] = f"http://127.0.0.1:{server.server_port}"
+        if tool == "vue-cli-service":
+            project_config = next((checkout / name for name in ("vue.config.js", "vue.config.cjs")
+                                   if (checkout / name).is_file()), None)
+            if project_config is None:
+                parser.error("Vue CLI preview requires the checkout's vue.config.js or vue.config.cjs.")
+            preview_config = Path(config_dir) / "vue.config.cjs"
+            preview_config.write_text(VUE_PREVIEW_CONFIG)
+            # Vue CLI 5 looks up package metadata beside an external config.
+            (preview_config.parent / "package.json").write_text('{"type":"commonjs"}')
+            env["WEBUI_PREVIEW_PROJECT_CONFIG"] = str(project_config)
+            env["VUE_CLI_SERVICE_CONFIG_PATH"] = str(preview_config)
+            env["VUE_APP_SUBSCRIBE_SOCKET_DISABLED"] = "true"
+        print("Open /#/logs/event-logs on the dev server URL. Sign in with preview / preview.", flush=True)
         try:
             return subprocess.call(["npm", "run", "serve", "--", "--host", "127.0.0.1"],
                                    cwd=checkout, env=env)

@@ -189,9 +189,9 @@ To debug a bmcweb host test in VS Code:
 
 webui_preview                           Find webui-vue and start the local Event Logs preview.
   Edit events.json in the launch directory and refresh the page to see your changes.
-  Use preview / preview to sign in, then open /#/logs/event-logs on the Vite URL.
+  Use preview / preview to sign in, then open /#/logs/event-logs on the dev server URL.
   Save Vue edits for hot reload. Refresh the page after editing events.json.
-  The preview serves read-only entries. Install dependencies with npm ci if needed.
+  The preview serves read-only entries. See the preview guide below for SDK dependency setup.
 
 To create a test entry on a running test BMC, run this in its shell:
   busctl call xyz.openbmc_project.Logging /xyz/openbmc_project/logging \
@@ -396,9 +396,15 @@ webui_preview
 
 The launcher prints the selected checkout and creates or reuses `events.json` in your
 current directory. From the workspace it prefers the devtool checkout, then looks in
-the machine's Yocto build. If Vite is missing, run `npm ci` in the selected checkout.
+the machine's Yocto build. The launcher reads the serve script for Vite or Vue CLI and
+uses the recipe's native Node.js and npm when available. If npm reports ENOENT for
+a vendor archive, restore that archive before running npm ci, or reuse dependencies
+from the same checkout revision and lockfile built for the same host.
 
-Open Vite's Local URL, sign in with `preview` / `preview`, then visit `/#/logs/event-logs`.
+For Vue CLI, the launcher generates a temporary config that proxies /redfish to the mock
+and leaves the hot-reload WebSocket with webpack. Run the same webui_preview command.
+
+Open the dev server's Local URL, sign in with `preview` / `preview`, then visit `/#/logs/event-logs`.
 Edit a `Message` in the printed JSON file and refresh the browser. Vue edits hot-reload.
 Press Ctrl+C to stop. Use `webui_preview --help` for optional checkout and fixture paths.
 
