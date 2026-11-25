@@ -77,7 +77,7 @@ OPENBMC_ROOT="${OPENBMC_ROOT:-$HOME/Projects/openbmc_aspeed_sdk_11.03/openbmc-11
 BMC_SCRIPTS_DIR="$HOME/Desktop/scripts"
 
 validate_redfish() { bash "$BMC_SCRIPTS_DIR/validate-redfish.sh" "$@"; }
-webui_preview() { python3 "$HOME/personal-setup/webui_preview.py" "$@"; }
+webui_preview() { python3 "$BMC_SCRIPTS_DIR/webui_preview.py" "$@"; }
 generate_openapi() { python3 "$BMC_SCRIPTS_DIR/generate-openapi.py" "$@"; }
 
 if [[ $- == *i* ]]; then
